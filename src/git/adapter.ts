@@ -97,6 +97,18 @@ export async function showTaskMd(sha: string, opts: GitOptions = {}): Promise<st
 }
 
 /**
+ * `git rev-parse HEAD` → the current commit sha (the agent's post-run state, the
+ * far end of the audited range). Recorded in the scorecard as `head_sha`.
+ *
+ * Unrecoverable like the rest of the adapter: no repo / detached-empty HEAD →
+ * {@link GitError} → exit `2`. The trailing newline is trimmed.
+ */
+export async function headSha(opts: GitOptions = {}): Promise<string> {
+  const stdout = await runGit(["rev-parse", "HEAD"], opts.cwd);
+  return stdout.trim();
+}
+
+/**
  * `git ls-files -z` → number of tracked files (repo size at baseline).
  * `-z` NUL-delimits entries so paths containing newlines are counted once.
  */

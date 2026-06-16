@@ -6,7 +6,7 @@ import {
   makeNonRepoDir,
   makeTempRepo,
 } from "../../tests/fixtures/repos/make-repo.js";
-import { diffNumstat, GitError, lsFiles, showTaskMd } from "./adapter.js";
+import { diffNumstat, GitError, headSha, lsFiles, showTaskMd } from "./adapter.js";
 
 describe("git adapter", () => {
   let repo: string;
@@ -113,6 +113,25 @@ describe("git adapter", () => {
       await commit(repo, { "a.txt": "x\n", "src/b.ts": "y\n", "task.md": "z\n" }, "baseline");
       const count = await lsFiles({ cwd: repo });
       expect(count).toBe(3);
+    });
+  });
+
+  describe("headSha", () => {
+    it("returns the current HEAD commit sha", async () => {
+      const sha = await commit(repo, { "a.txt": "x\n" }, "baseline");
+      const head = await headSha({ cwd: repo });
+      expect(head).toBe(sha);
+      // A sha, not a ref name, and with no trailing whitespace.
+      expect(head).toMatch(/^[0-9a-f]{40}$/);
+    });
+
+    it("throws GitError when there is no git repo", async () => {
+      const nonRepo = await makeNonRepoDir();
+      try {
+        await expect(headSha({ cwd: nonRepo })).rejects.toBeInstanceOf(GitError);
+      } finally {
+        await cleanupRepo(nonRepo);
+      }
     });
   });
 });
