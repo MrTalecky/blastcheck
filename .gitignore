@@ -1,0 +1,16 @@
+# Dependencies & build output
+node_modules
+dist
+coverage
+
+# Logs & OS cruft
+*.log
+.DS_Store
+
+# Non-functional artifacts (kept local for now)
+_bmad/
+_bmad-output/
+.claude/
+docs/
+agentcheck-v1-spec.md
+agentcheck-v1-spec-en.md
