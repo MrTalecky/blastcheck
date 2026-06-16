@@ -8,6 +8,7 @@
  * checks themselves arrive in Story 1.3 (git-only) and 2.2 (trajectory).
  */
 
+import { log } from "../log.js";
 import type { Check } from "../types.js";
 
 /** The six stable check ids. */
@@ -36,8 +37,30 @@ export const CHECK_IDS = [
  */
 const registry: Partial<Record<CheckId, Check>> = {};
 
-/** Register a check implementation under its stable id. */
+/**
+ * Register a check implementation under its stable id. Hardened against the two
+ * ways this module-global singleton can be corrupted (Story 1.1 deferred debt):
+ *  - a `check.id` that is not a known {@link CheckId} (runtime guard, not just
+ *    the TS type) is rejected with a log and ignored;
+ *  - a duplicate registration with a DIFFERENT implementation is logged (the
+ *    later one wins, but it should never happen silently). Re-registering the
+ *    exact SAME object reference is idempotent and quiet.
+ *
+ * Dedup is by reference identity, so it cannot distinguish a genuine collision
+ * (two different checks claiming one id) from a module reload that re-evaluates
+ * the same source into a fresh object — the latter would log a benign warn. In
+ * practice the barrel (`./index.ts`) registers each check once per process, so
+ * neither case arises in normal runs.
+ */
 export function registerCheck(check: Check): void {
+  if (!isCheckId(check.id)) {
+    log("error", `registerCheck: unknown check id ${JSON.stringify(check.id)} — ignored`);
+    return;
+  }
+  const existing = registry[check.id];
+  if (existing && existing !== check) {
+    log("warn", `registerCheck: ${check.id} re-registered with a different implementation`);
+  }
   registry[check.id] = check;
 }
 

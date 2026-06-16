@@ -91,6 +91,38 @@ describe("runChecks", () => {
     expect(results[1]?.status).toBe("pass");
   });
 
+  it("normalizes an invalid skipped result coming from a check (rule #2)", () => {
+    // A buggy check returns skipped without a reason, with stray findings + score.
+    const buggy = fakeCheck({
+      id: "churn",
+      run: () => ({
+        check: "churn",
+        status: "skipped",
+        score: 0.5,
+        findings: [{ severity: "info", message: "leaked" }],
+      }),
+    });
+
+    const { results } = runChecks([buggy], { contract: CONTRACT });
+
+    const r = results[0];
+    expect(r?.status).toBe("skipped");
+    expect(r?.reason && r.reason.length > 0).toBe(true);
+    expect(r?.findings).toEqual([]);
+    expect(r && "score" in r).toBe(false);
+  });
+
+  it("leaves a valid skipped result from a check untouched", () => {
+    const skip = fakeCheck({
+      id: "churn",
+      run: () => ({ check: "churn", status: "skipped", reason: "no repo size", findings: [] }),
+    });
+
+    const { results } = runChecks([skip], { contract: CONTRACT });
+
+    expect(results[0]?.reason).toBe("no repo size");
+  });
+
   it("preserves check order in results", () => {
     const a = fakeCheck({ id: "denied-files" });
     const b = fakeCheck({ id: "churn" });

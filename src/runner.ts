@@ -48,6 +48,36 @@ function isAvailable(ctx: CheckContext, field: Field): boolean {
 }
 
 /**
+ * Enforce the `skipped` invariant (rule #2) on a result coming FROM a check —
+ * the runner only guarantees it for skips it generates itself, so a buggy check
+ * returning `skipped` without a `reason`, with stray `findings`, or with a
+ * `score` would otherwise pass through. We repair it (and log) rather than throw,
+ * keeping the audit/CI gate alive. Non-skipped results are returned untouched.
+ */
+function normalizeResult(check: Check, result: CheckResult): CheckResult {
+  if (result.status !== "skipped") return result;
+
+  const issues: string[] = [];
+  let reason = result.reason;
+  if (reason == null || reason.trim() === "") {
+    issues.push("missing reason");
+    reason = "check reported skipped without a reason";
+  }
+  if (result.findings.length > 0) issues.push("non-empty findings");
+  if (result.score !== undefined) issues.push("score present");
+
+  if (issues.length === 0) return result;
+
+  log(
+    "error",
+    `check ${check.id} returned an invalid skipped result (${issues.join(", ")}); normalizing`,
+  );
+  // Use the registered `check.id`, not `result.check`: if the check reported a
+  // mismatched id, the emitted record should agree with the log and the registry.
+  return { check: check.id, status: "skipped", reason, findings: [] };
+}
+
+/**
  * Run `checks` against `ctx`, collecting a {@link CheckResult} for each and an
  * {@link EvidenceLevel} profile. Never throws: a check that violates the
  * "never throw" rule (#6) is defensively contained so one buggy check cannot
@@ -72,7 +102,7 @@ export function runChecks(checks: Check[], ctx: CheckContext): RunOutput {
 
     let result: CheckResult;
     try {
-      result = check.run(ctx);
+      result = normalizeResult(check, check.run(ctx));
     } catch (err) {
       // Checks MUST NOT throw (rule #6). If one does, contain it: log and emit a
       // skipped result rather than letting the exception abort the audit.
