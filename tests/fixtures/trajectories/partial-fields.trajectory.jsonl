@@ -1,0 +1,2 @@
+{"tool":"Read","args":{"path":"src/app.ts"}}
+{"tool":"Bash","args":{"cmd":"npm test"}}

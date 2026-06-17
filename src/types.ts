@@ -89,14 +89,58 @@ export interface DiffEntry {
 
 /**
  * Audit context handed to each check. Foundation shape — the runner that
- * populates it lands in Story 1.2; trajectory shape lands in Story 2.1.
+ * populates it lands in Story 1.2. Trajectory loading lands in Story 2.1:
+ * `trajectory` is set only when there is at least one usable event.
  */
 export interface CheckContext {
   contract: Contract;
   diff?: DiffEntry[];
   taskMd?: string | null;
   repoSize?: number;
-  trajectory?: unknown;
+  trajectory?: TrajectoryLoadResult;
+}
+
+/** One normalized tool-use event from an agent trajectory. */
+export interface TrajectoryEvent {
+  tool: string;
+  args: {
+    path?: string;
+    cmd?: string;
+    [key: string]: unknown;
+  };
+  /** Valid source `step`, or the original line position when absent/invalid. */
+  step: number;
+  ts?: string;
+  exitCode?: number;
+  stdoutTail?: string;
+  stderrTail?: string;
+  /** Original external object, retained for debugging only. */
+  raw?: unknown;
+}
+
+/** Per-line trajectory degradation diagnostic. */
+export interface TrajectoryDiagnostic {
+  line: number;
+  reason: string;
+}
+
+/** Coverage profile for a loaded trajectory file. */
+export interface TrajectoryCoverage {
+  totalLines: number;
+  acceptedLines: number;
+  rejectedLines: number;
+  hasStep: boolean;
+  hasExitCode: boolean;
+  hasTimestamps: boolean;
+  hasStdoutTail: boolean;
+  missingFields: string[];
+}
+
+/** Result of trajectory JSONL loading. */
+export interface TrajectoryLoadResult {
+  events: TrajectoryEvent[];
+  diagnostics: TrajectoryDiagnostic[];
+  coverage: TrajectoryCoverage;
 }
 
 /**

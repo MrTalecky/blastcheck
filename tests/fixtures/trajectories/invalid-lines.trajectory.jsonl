@@ -1,0 +1,5 @@
+
+not json
+{"args":{"path":"src/app.ts"}}
+{"tool":"Read","args":{}}
+{"tool":"Bash","args":{"cmd":"pwd"}}

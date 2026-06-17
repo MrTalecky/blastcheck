@@ -50,11 +50,11 @@ export function buildProgram(outcome: Outcome): Command {
 
   program
     .command("run")
-    .description("Run a git-only audit and emit scorecard.json to stdout.")
+    .description("Run an audit and emit scorecard.json to stdout.")
     .requiredOption("--baseline <sha>", "pre-run commit to audit against (required)")
     .option("--task <path>", "task file (reserved; v1 reads baseline:task.md)")
     .option("--out <path>", "also write scorecard.json to this file")
-    .option("--trajectory <path>", "agent trajectory (reserved; not parsed in v1)")
+    .option("--trajectory <path>", "agent trajectory JSONL")
     .option("-v, --verbose", "verbose (debug) logging to stderr")
     .action(async (opts: RunOptions) => {
       setVerbose(Boolean(opts.verbose));

@@ -9,6 +9,7 @@
  * `run_id` is a timestamp and is never pinned.
  */
 
+import { writeFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupRepo,
@@ -24,6 +25,7 @@ import { EXIT } from "./types.js";
 
 /** Baseline `task.md` declaring `src/**` in scope. */
 const TASK_MD = '---\ngoal: implement the feature\nallow:\n  - "src/**"\n---\n# task\nbody\n';
+const TRAJECTORY_FIXTURES = `${process.cwd()}/tests/fixtures/trajectories`;
 
 /**
  * A baseline with enough tracked files that a small edit stays under the churn
@@ -91,6 +93,55 @@ describe("runAudit (git-only E2E)", () => {
     expect(sc.evidence_level.trajectory).toBe("absent");
   });
 
+  it("marks trajectory evidence present only when the loaded file has usable events", async () => {
+    const baseline = await commit(repo, baselineFiles(), "baseline");
+    await commit(repo, { "src/f0.ts": "export const f0 = 999;\n" }, "in-scope edit");
+
+    const sc = await runAudit({
+      cwd: repo,
+      baselineSha: baseline,
+      trajectoryPath: `${TRAJECTORY_FIXTURES}/partial-fields.trajectory.jsonl`,
+    });
+
+    expect(scorecardSchema.safeParse(sc).success).toBe(true);
+    expect(sc.evidence_level.trajectory).toBe("present");
+    expect(sc.evidence_level.checks["required-checks"]).toBeUndefined();
+    expect(sc.evidence_level.checks["loop-detection"]).toBeUndefined();
+  });
+
+  it("keeps trajectory evidence absent when the file has no usable events", async () => {
+    const baseline = await commit(repo, baselineFiles(), "baseline");
+    await commit(repo, { "src/f0.ts": "export const f0 = 999;\n" }, "in-scope edit");
+
+    const sc = await runAudit({
+      cwd: repo,
+      baselineSha: baseline,
+      trajectoryPath: `${TRAJECTORY_FIXTURES}/no-usable.trajectory.jsonl`,
+    });
+
+    expect(scorecardSchema.safeParse(sc).success).toBe(true);
+    expect(sc.evidence_level.trajectory).toBe("absent");
+  });
+
+  it("resolves a relative trajectory path against the audited cwd", async () => {
+    const baseline = await commit(repo, baselineFiles(), "baseline");
+    await commit(repo, { "src/f0.ts": "export const f0 = 999;\n" }, "in-scope edit");
+    await writeFile(
+      `${repo}/trajectory.jsonl`,
+      '{"tool":"Bash","args":{"cmd":"npm test"}}\n',
+      "utf8",
+    );
+
+    const sc = await runAudit({
+      cwd: repo,
+      baselineSha: baseline,
+      trajectoryPath: "trajectory.jsonl",
+    });
+
+    expect(scorecardSchema.safeParse(sc).success).toBe(true);
+    expect(sc.evidence_level.trajectory).toBe("present");
+  });
+
   it("throws a GitError on an unreadable baseline sha (→ tool error)", async () => {
     await commit(repo, baselineFiles(), "baseline");
     // Assert the concrete failure type, not merely "rejects with something":
@@ -145,6 +196,25 @@ describe("cli main (git-only E2E exit codes)", () => {
     const err = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
     expect(err).toContain("blastcheck:");
     expect(out).not.toContain("blastcheck:");
+  });
+
+  it("keeps stdout as the single scorecard JSON when --trajectory is provided", async () => {
+    const baseline = await commit(repo, baselineFiles(), "baseline");
+    await commit(repo, { "src/f0.ts": "export const f0 = 999;\n" }, "in-scope edit");
+    await main([
+      "node",
+      "blastcheck",
+      "run",
+      "--baseline",
+      baseline,
+      "--trajectory",
+      `${TRAJECTORY_FIXTURES}/claude-code-valid.trajectory.jsonl`,
+    ]);
+
+    const out = stdoutSpy.mock.calls.map((c) => String(c[0])).join("");
+    const parsed = scorecardSchema.parse(JSON.parse(out));
+    expect(parsed.evidence_level.trajectory).toBe("present");
+    expect(out).not.toContain("diagnostic");
   });
 
   it("exits 1 on a failing audit (denied file)", async () => {

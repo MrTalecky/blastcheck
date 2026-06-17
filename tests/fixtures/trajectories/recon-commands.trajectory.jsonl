@@ -1,0 +1,4 @@
+{"tool":"Bash","args":{"cmd":"git status"}}
+{"tool":"Bash","args":{"cmd":"ls"}}
+{"tool":"Bash","args":{"cmd":"pwd"}}
+{"tool":"Bash","args":{"cmd":"cat package.json"}}
