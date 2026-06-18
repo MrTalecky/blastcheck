@@ -147,6 +147,35 @@ describe("cli main", () => {
     await expect(main(argv("run", "--baseline", "abc", "--out", bad))).resolves.toBe(EXIT.FAIL);
   });
 
+  it("--comment writes the PR-comment markdown (with marker) and nothing to stdout", async () => {
+    runAuditMock.mockResolvedValue(scorecard("pass"));
+    const dir = await mkdtemp(join(tmpdir(), "blastcheck-cli-"));
+    const commentPath = join(dir, "comment.md");
+    try {
+      await expect(main(argv("run", "--baseline", "abc", "--comment", commentPath))).resolves.toBe(
+        EXIT.OK,
+      );
+      const written = await readFile(commentPath, "utf8");
+      // First line is the upsert marker the Action keys on.
+      expect(written.startsWith("<!-- blastcheck-scorecard -->")).toBe(true);
+      expect(written).toContain("PASS");
+      // stdout still carries ONLY scorecard.json — never the comment markdown.
+      const out = stdout.mock.calls.map((c) => String(c[0])).join("");
+      expect(out).toContain('"verdict": "pass"');
+      expect(out).not.toContain("<!-- blastcheck-scorecard -->");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a failed --comment write does NOT mask the verdict exit code", async () => {
+    runAuditMock.mockResolvedValue(scorecard("fail"));
+    // Parent directory does not exist → writeFile rejects (ENOENT). The fail
+    // verdict must still map to exit 1, not the tool-error exit 2 (mirror of --out).
+    const bad = join(tmpdir(), "blastcheck-no-such-dir-xyz", "comment.md");
+    await expect(main(argv("run", "--baseline", "abc", "--comment", bad))).resolves.toBe(EXIT.FAIL);
+  });
+
   it("init invokes the installer and exits 0", async () => {
     runInitMock.mockResolvedValue({ added: 3, settingsPath: ".claude/settings.json" });
     await expect(main(argv("init"))).resolves.toBe(EXIT.OK);

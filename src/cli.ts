@@ -22,6 +22,7 @@ import { parseHookPayload, readStdin } from "./hooks/state.js";
 import { runStop } from "./hooks/stop.js";
 import { runAudit } from "./index.js";
 import { log, setVerbose } from "./log.js";
+import { renderPrComment } from "./scorecard/markdown.js";
 import { printScorecard } from "./scorecard/print.js";
 import { EXIT, type ExitCode } from "./types.js";
 
@@ -32,6 +33,7 @@ interface RunOptions {
   baseline: string;
   task?: string;
   out?: string;
+  comment?: string;
   trajectory?: string;
   verbose?: boolean;
 }
@@ -59,6 +61,7 @@ export function buildProgram(outcome: Outcome): Command {
     .requiredOption("--baseline <sha>", "pre-run commit to audit against (required)")
     .option("--task <path>", "task file (reserved; v1 reads baseline:task.md)")
     .option("--out <path>", "also write scorecard.json to this file")
+    .option("--comment <path>", "also write the PR-comment markdown to this file")
     .option("--trajectory <path>", "agent trajectory JSONL")
     .option("-v, --verbose", "verbose (debug) logging to stderr")
     .action(async (opts: RunOptions) => {
@@ -92,6 +95,21 @@ export function buildProgram(outcome: Outcome): Command {
           log(
             "error",
             `failed to write --out ${opts.out}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      // `--comment` is the side channel the GitHub Action consumes: the same
+      // scorecard rendered as PR-comment markdown. Like `--out`, it is written
+      // AFTER the verdict code is set and a write failure is logged but must NOT
+      // override the exit code or touch stdout (stdout stays scorecard.json only).
+      if (opts.comment !== undefined) {
+        try {
+          await writeFile(opts.comment, renderPrComment(scorecard), "utf8");
+        } catch (err) {
+          log(
+            "error",
+            `failed to write --comment ${opts.comment}: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       }

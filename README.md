@@ -8,12 +8,13 @@ files may be touched, how much churn is acceptable, whether required checks ran,
 and more. The verdict is a machine-readable scorecard plus a process exit code,
 so it slots into pre-commit hooks and CI gates.
 
-> **Status: early.** This is the foundation (Story 1.1) — scaffold, canonical
-> types, path normalization, `ignore`-based matching, and the git adapter. The
-> six checks and the audit runner land in subsequent stories, so `blastcheck`
-> does not yet produce a real verdict (`runAudit` is a stub).
+> **Status: v1 in progress.** The git-only checks (`denied-files`,
+> `scope-adhesion`, `churn`), the trajectory checks, the audit runner, the
+> `scorecard.json` output, the Claude Code hooks installer (`blastcheck init`),
+> and the composite GitHub Action are implemented. `runAudit` produces a real
+> verdict; the remaining work is cross-agent trajectory adapters (Epic 4).
 
-## Planned checks
+## Checks
 
 | Check                   | Class      |
 | ----------------------- | ---------- |
@@ -46,10 +47,22 @@ node dist/cli.js --version
 Once installed (`npm i -g` / via the `blastcheck` bin), the CLI is invoked as:
 
 ```bash
-blastcheck --contract <path>
+# Audit the working tree against a pre-run baseline commit (git-only).
+blastcheck run --baseline <sha>
+
+# Also mirror the scorecard to a file and render the PR-comment markdown.
+blastcheck run --baseline <sha> --out scorecard.json --comment comment.md
+
+# Include an agent trajectory (enables the trajectory checks).
+blastcheck run --baseline <sha> --trajectory trace.jsonl
+
+# Install the Claude Code hooks (trajectory capture + audit on Stop).
+blastcheck init
 ```
 
-`stdout` is reserved for the `scorecard.json`; all diagnostics go to `stderr`.
+`stdout` is reserved for the `scorecard.json`; all diagnostics (and the
+human-readable summary) go to `stderr`. `--out` and `--comment` are optional side
+channels — a write failure on either is logged but never changes the exit code.
 
 ### Exit codes
 
@@ -58,6 +71,66 @@ blastcheck --contract <path>
 | `0`  | Audit passed                                       |
 | `1`  | Verdict / gate failed                              |
 | `2`  | Tool error (e.g. no git repo, unreadable baseline) — **not** an audit failure |
+
+## GitHub Action
+
+`blastcheck` ships a composite Action that gates pull requests: it audits the PR
+in git-only mode, posts the scorecard as a PR comment, and fails the check on a
+`fail` verdict (or tool error). With branch protection on the check, a failed
+audit blocks merge.
+
+Consumer workflow:
+
+```yaml
+name: blastcheck
+on: pull_request
+permissions:
+  contents: read         # checkout
+  pull-requests: write   # upsert the scorecard comment
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # REQUIRED: merge-base + `git show <baseline>:task.md`
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: <owner>/blastcheck@<ref>
+        # with:               # all inputs are optional
+        #   baseline: ""             # default: git merge-base <base> <head>
+        #   working-directory: "."   # where to run the audit
+        #   comment: "true"          # upsert the scorecard PR comment
+        #   fail-on-verdict: "true"  # exit 1/2 fails the check (block merge)
+```
+
+### Inputs
+
+| Input               | Default | Meaning                                                              |
+| ------------------- | ------- | ------------------------------------------------------------------- |
+| `baseline`          | `""`    | Commit to audit against. Empty → `git merge-base <base> <head>`.    |
+| `working-directory` | `"."`   | Directory to run the audit in (the checked-out PR head).            |
+| `comment`           | `"true"`| Upsert the scorecard as a single PR comment.                        |
+| `fail-on-verdict`   | `"true"`| Propagate the binary's exit code (1/2) as a failed check.           |
+
+### Behavior
+
+- **Exit codes / merge blocking.** The Action posts the comment *before* gating,
+  then exits with the binary's code: `0` for `pass`/`warn` (warn never blocks),
+  `1` for `fail`, `2` for a tool error. Add the check to branch protection to
+  block merge on a red result. Set `fail-on-verdict: false` for report-only runs.
+- **Idempotent comment.** The scorecard comment carries a hidden marker
+  (`<!-- blastcheck-scorecard -->`); repeated runs edit that one comment instead
+  of piling up new ones.
+- **Baseline = merge-base.** The diff far-baseline and the `task.md`/`allow`
+  pinning point. If `task.md` isn't present on the merge-base, the contract
+  resolver degrades to `allow: []` honestly — the Action does not fail for that.
+  Override with the `baseline` input if your repo pins the contract elsewhere.
+- **Fork PRs.** `GITHUB_TOKEN` is read-only on PRs from forks, so the comment
+  upsert can't write — the Action logs a warning and continues (it does **not**
+  switch to `pull_request_target`, which would be unsafe with untrusted code).
+- **`fetch-depth: 0` is required.** A shallow clone makes `merge-base` and
+  `git show <baseline>:task.md` fail, surfacing as exit `2` (a red check from
+  infrastructure, not the verdict).
 
 ## Development
 

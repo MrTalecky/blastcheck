@@ -1,0 +1,144 @@
+name: blastcheck
+description: >-
+  Audit an AI coding-agent PR against its contract (git-only mode): post the
+  scorecard as a PR comment and fail the check on a `fail` verdict.
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  baseline:
+    description: >-
+      Commit to audit against (the diff far-baseline and the `task.md`/allow
+      pinning point). Empty (default) computes `git merge-base <base> <head>`.
+    required: false
+    default: ""
+  working-directory:
+    description: Directory to run the audit in (the checked-out PR head).
+    required: false
+    default: "."
+  comment:
+    description: Whether to upsert the scorecard as a PR comment (true/false).
+    required: false
+    default: "true"
+  fail-on-verdict:
+    description: >-
+      Whether a `fail` verdict / tool error (exit 1/2) fails the check.
+      Set to "false" to always exit 0 (e.g. report-only).
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # Step A — Node toolchain (engines.node >= 20; built/tested on Node 22).
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+
+    # Step B — Build the binary FROM the Action's own checkout, not the consumer
+    # repo. `$GITHUB_ACTION_PATH` is where this action.yml lives (tsup → dist/cli.js).
+    # Future alternative (noted for later): ship a prebuilt dist/ or publish to
+    # npm and `npx blastcheck`, avoiding a per-run build.
+    - name: Build blastcheck
+      shell: bash
+      run: |
+        cd "$GITHUB_ACTION_PATH"
+        npm ci
+        npm run build
+
+    # Step C — Resolve the baseline. If the input is empty, compute the merge-base
+    # of the PR base and the current HEAD (the checked-out PR head). Requires the
+    # full history (fetch-depth: 0) — a shallow clone makes merge-base fail.
+    - name: Resolve baseline
+      id: baseline
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: |
+        if [ -n "$INPUT_BASELINE" ]; then
+          BASELINE="$INPUT_BASELINE"
+        elif [ -n "$BASE_SHA" ]; then
+          # merge-base prints nothing and exits non-zero for unrelated histories;
+          # head -n1 collapses the rare multi-line (criss-cross) result. Fail with
+          # a clear message rather than running the audit against an empty baseline.
+          if ! BASELINE="$(git merge-base "$BASE_SHA" HEAD | head -n1)" || [ -z "$BASELINE" ]; then
+            echo "::error::Could not compute git merge-base of $BASE_SHA and HEAD — ensure fetch-depth: 0 and related histories." >&2
+            exit 1
+          fi
+        else
+          echo "::error::No baseline input and no pull_request base SHA — run on pull_request or pass the baseline input." >&2
+          exit 1
+        fi
+        echo "Using baseline: $BASELINE" >&2
+        echo "sha=$BASELINE" >> "$GITHUB_OUTPUT"
+
+    # Step D — Run the audit via the single public path (the built CLI over
+    # runAudit, AR9). No `--trajectory` → git-only mode (trajectory checks
+    # degrade to absent, NFR4). stdout (scorecard.json) is captured by `--out`;
+    # the PR-comment markdown by `--comment`. Do NOT fail here — we must post the
+    # comment first; the exit code is carried to the gate step.
+    - name: Run audit
+      id: audit
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set +e
+        node "$GITHUB_ACTION_PATH/dist/cli.js" run \
+          --baseline "${{ steps.baseline.outputs.sha }}" \
+          --out scorecard.json \
+          --comment comment.md
+        code=$?
+        set -e
+        echo "code=$code" >> "$GITHUB_OUTPUT"
+        echo "blastcheck exited with $code" >&2
+
+    # Step E — Upsert the scorecard comment, keyed by the hidden marker. On a
+    # fork PR the GITHUB_TOKEN is read-only, so POST/PATCH fails on permissions:
+    # warn and continue rather than failing the job (do NOT switch to
+    # pull_request_target — it checks out untrusted base and is unsafe).
+    - name: Upsert PR comment
+      if: ${{ inputs.comment == 'true' && github.event.pull_request.number }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        MARKER: "<!-- blastcheck-scorecard -->"
+      run: |
+        if [ ! -f comment.md ]; then
+          echo "::warning::comment.md not produced — skipping PR comment." >&2
+          exit 0
+        fi
+        post_comment() {
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --paginate --jq ".[] | select((.body // \"\") | startswith(\"$MARKER\")) | .id" | head -n1)"
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" \
+              -f body="$(cat comment.md)" >/dev/null
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              -f body="$(cat comment.md)" >/dev/null
+          fi
+        }
+        if ! post_comment; then
+          echo "::warning::Could not upsert PR comment (read-only token on a fork PR?). Continuing." >&2
+        fi
+
+    # Step F — Gate: propagate the binary's exit code so verdict `fail` (1) or a
+    # tool error (2) turns the check red and, with branch protection on it, blocks
+    # merge (FR20). `warn` is exit 0 and never blocks. fail-on-verdict=false makes
+    # the step report-only (always exit 0).
+    - name: Gate on verdict
+      shell: bash
+      run: |
+        # Fail CLOSED: gate UNLESS explicitly disabled. A typo in fail-on-verdict
+        # (e.g. "True"/"1") must NOT silently turn the merge gate off — only the
+        # literal "false" opts into report-only.
+        if [ "${{ inputs.fail-on-verdict }}" = "false" ]; then
+          exit 0
+        fi
+        exit ${{ steps.audit.outputs.code }}
