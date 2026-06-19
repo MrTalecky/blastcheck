@@ -6,6 +6,25 @@ export interface InstallOptions {
 
 export interface InstallResult {
   agent: AgentId;
+  configFiles?: string[];
+  evidencePaths?: Record<string, string>;
+  trust?: InstallTrustState;
+}
+
+export type InstallTrustState = "trusted" | "needs-review";
+
+export interface InstallManifestEntry {
+  agent: AgentId;
+  displayName?: string;
+  configFiles: string[];
+  evidencePaths: Record<string, string>;
+  trust?: InstallTrustState;
+  updatedAt: string;
+}
+
+export interface InstallManifest {
+  schemaVersion: "1";
+  integrations: Partial<Record<AgentId, InstallManifestEntry>>;
 }
 
 export interface AgentIntegration {

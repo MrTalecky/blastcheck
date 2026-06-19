@@ -199,12 +199,16 @@ describe("cli main", () => {
     await expect(main(argv("init"))).resolves.toBe(EXIT.OK);
     expect(getIntegrationMock).toHaveBeenCalledWith("claude-code");
     expect(installMock).toHaveBeenCalledWith({ cwd: process.cwd() });
+    const out = stdout.mock.calls.map((c) => String(c[0])).join("");
+    expect(out).toBe("");
   });
 
   it("init --agent claude-code routes to the claude-code integration", async () => {
     await expect(main(argv("init", "--agent", "claude-code"))).resolves.toBe(EXIT.OK);
     expect(getIntegrationMock).toHaveBeenCalledWith("claude-code");
     expect(installMock).toHaveBeenCalledWith({ cwd: process.cwd() });
+    const out = stdout.mock.calls.map((c) => String(c[0])).join("");
+    expect(out).toBe("");
   });
 
   it("init --agent unknown exits 2, calls no installer, and writes nothing to stdout", async () => {

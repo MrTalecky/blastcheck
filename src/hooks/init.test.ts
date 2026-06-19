@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -78,6 +78,18 @@ describe("init installer", () => {
     expect(gitignore.match(/\.blastcheck\//g)).toHaveLength(1);
   });
 
+  it("does not rewrite settings.json when all managed hooks are already installed", async () => {
+    await runInit({ cwd: dir });
+    const before = await stat(settingsFile(dir));
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const second = await runInit({ cwd: dir });
+    const after = await stat(settingsFile(dir));
+
+    expect(second.added).toBe(0);
+    expect(after.mtimeMs).toBe(before.mtimeMs);
+  });
+
   it("merges into existing settings, preserving unrelated hooks and keys", async () => {
     await mkdir(join(dir, ".claude"), { recursive: true });
     await writeFile(
@@ -103,6 +115,44 @@ describe("init installer", () => {
     const starGroup = settings.hooks?.PostToolUse?.find((g) => g.matcher === "*");
     expect(starGroup?.hooks?.[0]?.command).toBe("blastcheck hook post-tool-use");
     expect(allCommands(settings)).toContain("blastcheck hook stop");
+  });
+
+  it("preserves existing user hook commands in the same managed matcher groups", async () => {
+    await mkdir(join(dir, ".claude"), { recursive: true });
+    await writeFile(
+      settingsFile(dir),
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            {
+              matcher: "startup|resume|clear",
+              hooks: [{ type: "command", command: "user session hook" }],
+            },
+          ],
+          PostToolUse: [
+            { matcher: "*", hooks: [{ type: "command", command: "user post-tool hook" }] },
+          ],
+          Stop: [{ hooks: [{ type: "command", command: "user stop hook" }] }],
+        },
+      }),
+    );
+
+    await runInit({ cwd: dir });
+    const settings = await readSettings(dir);
+
+    expect(allCommands(settings)).toEqual(
+      expect.arrayContaining([
+        "user session hook",
+        "user post-tool hook",
+        "user stop hook",
+        "blastcheck hook session-start",
+        "blastcheck hook post-tool-use",
+        "blastcheck hook stop",
+      ]),
+    );
+    expect(settings.hooks?.SessionStart).toHaveLength(1);
+    expect(settings.hooks?.PostToolUse).toHaveLength(1);
+    expect(settings.hooks?.Stop).toHaveLength(1);
   });
 
   it("appends to an existing .gitignore without a trailing newline", async () => {
