@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "Stop",
+  "session_id": "01J9Z8K4Q5W7X2Y3Z4A5B6C7D8",
+  "transcript_path": null,
+  "cwd": "/home/user/project",
+  "turn_id": "turn_07",
+  "stop_hook_active": false,
+  "last_assistant_message": "Done. All tests pass."
+}

@@ -15,7 +15,7 @@ import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { Command, CommanderError } from "commander";
-import { runPostToolUse } from "./hooks/post-tool-use.js";
+import { runCodexPostToolUse, runPostToolUse } from "./hooks/post-tool-use.js";
 import { runSessionStart } from "./hooks/session-start.js";
 import { parseHookPayload, readStdin } from "./hooks/state.js";
 import { runStop } from "./hooks/stop.js";
@@ -196,11 +196,11 @@ export function buildProgram(outcome: Outcome): Command {
     });
 
   // Hidden hook entrypoints invoked BY the installed hooks — they read the
-  // Claude Code event payload from stdin. `hook stop` mirrors `run`'s contract
+  // agent's event payload from stdin. `hook stop` mirrors `run`'s contract
   // (scorecard → stdout, verdict → exit code); the others never touch stdout.
   const hook = program
     .command("hook")
-    .description("Internal: Claude Code hook handlers (invoked via stdin).");
+    .description("Internal: Claude Code / Codex hook handlers (invoked via stdin).");
 
   hook
     .command("session-start")
@@ -221,6 +221,40 @@ export function buildProgram(outcome: Outcome): Command {
   hook
     .command("stop")
     .description("Stop handler: run the audit and emit scorecard.json to stdout.")
+    .action(async () => {
+      const payload = parseHookPayload(await readStdin());
+      outcome.code = await runStop(payload, hookCwd(payload));
+    });
+
+  // Codex lifecycle handlers (Story 2.2), invoked by the `.codex/hooks.json`
+  // command strings Story 2.1 installed — `blastcheck hook codex <name>`
+  // (space-separated), so a NESTED `codex` sub-group is required to match the
+  // exact paths the installer wrote. SessionStart/Stop reuse the agent-agnostic
+  // handlers verbatim (Codex payloads are field-compatible); only post-tool-use
+  // swaps in the Codex lifecycle adapter.
+  const codex = hook
+    .command("codex")
+    .description("Internal: Codex lifecycle hook handlers (invoked via stdin).");
+
+  codex
+    .command("session-start")
+    .description("Codex SessionStart handler: record the pre-commitment reference.")
+    .action(async () => {
+      const payload = parseHookPayload(await readStdin());
+      await runSessionStart(payload, hookCwd(payload));
+    });
+
+  codex
+    .command("post-tool-use")
+    .description("Codex PostToolUse handler: append the normalized trajectory event.")
+    .action(async () => {
+      const payload = parseHookPayload(await readStdin());
+      await runCodexPostToolUse(payload, hookCwd(payload));
+    });
+
+  codex
+    .command("stop")
+    .description("Codex Stop handler: run the audit and emit scorecard.json to stdout.")
     .action(async () => {
       const payload = parseHookPayload(await readStdin());
       outcome.code = await runStop(payload, hookCwd(payload));

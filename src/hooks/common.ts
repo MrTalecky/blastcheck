@@ -94,7 +94,10 @@ export function installHookSpec(settings: HookSettings, spec: HookSpec): boolean
     ? (settings.hooks as Record<string, MatcherGroup[]>)
     : {};
   settings.hooks = hooks;
-  const groups: MatcherGroup[] = Array.isArray(hooks[spec.event]) ? hooks[spec.event] : [];
+  // Bind the index access to a local so `Array.isArray` narrows it (under
+  // noUncheckedIndexedAccess the bare `hooks[spec.event]` re-reads as `… | undefined`).
+  const existingGroups = hooks[spec.event];
+  const groups: MatcherGroup[] = Array.isArray(existingGroups) ? existingGroups : [];
   hooks[spec.event] = groups;
 
   // Already installed if ANY group of this event references our command — the

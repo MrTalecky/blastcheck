@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "01J9Z8K4Q5W7X2Y3Z4A5B6C7D8",
+  "transcript_path": null,
+  "cwd": "/home/user/project",
+  "model": "gpt-5-codex",
+  "permission_mode": "auto",
+  "turn_id": "turn_03",
+  "tool_use_id": "call_abc123",
+  "tool_name": "shell",
+  "tool_input": { "command": ["bash", "-lc", "npm test"] },
+  "tool_response": { "stdout": "All tests passed", "stderr": "", "exit_code": 0 }
+}

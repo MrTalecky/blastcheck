@@ -5,8 +5,12 @@
  * `start_head` — the point BEFORE the agent does anything — so `post-tool-use`
  * can later recognize the session's first commit and pin it as the audit
  * baseline. On a brand-new session (`startup`/`clear`) it also resets the
- * trajectory and any stale baseline; on `resume` it leaves accumulated state
- * intact so a continued session keeps its trajectory and baseline.
+ * trajectory and any stale baseline; on a continued source (`resume`, and
+ * Codex's `compact`) it leaves accumulated state intact so the session keeps its
+ * trajectory and baseline. `FRESH_SOURCES` lists ONLY the reset sources, so any
+ * other source — including Codex `compact`, which Claude Code does not emit — is
+ * correctly treated as a continuation (a compacted session is the same session;
+ * resetting would discard its evidence). [AC7]
  *
  * Never throws — a hook must not crash the session (consistency rule #6).
  */

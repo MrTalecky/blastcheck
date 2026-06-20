@@ -19,6 +19,8 @@
 
 import { log } from "../log.js";
 import { adaptClaudeCodePostToolUse } from "../trajectory/adapters/claude-code.js";
+import { adaptCodexPostToolUse } from "../trajectory/adapters/codex-lifecycle.js";
+import type { ExternalTrajectoryEvent } from "../trajectory/adapters/common.js";
 import { currentHead } from "./git.js";
 import {
   appendLine,
@@ -29,9 +31,21 @@ import {
   writeStateFile,
 } from "./state.js";
 
-export async function runPostToolUse(payload: unknown, cwd: string): Promise<void> {
+/**
+ * Normalizes a raw hook payload into canonical events. The record+pin handler is
+ * agent-agnostic; the adapter is the ONLY agent-specific seam, so it is injected
+ * (Claude default below, Codex via {@link runCodexPostToolUse}) — one
+ * implementation, two callers (mirrors Story 2.1's shared installer-merge).
+ */
+type PostToolUseAdapter = (input: unknown) => ExternalTrajectoryEvent[];
+
+export async function runPostToolUse(
+  payload: unknown,
+  cwd: string,
+  adapt: PostToolUseAdapter = adaptClaudeCodePostToolUse,
+): Promise<void> {
   try {
-    await recordEvents(payload, cwd);
+    await recordEvents(payload, cwd, adapt);
   } catch (err) {
     log("warn", `post-tool-use record failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -42,8 +56,21 @@ export async function runPostToolUse(payload: unknown, cwd: string): Promise<voi
   }
 }
 
-async function recordEvents(payload: unknown, cwd: string): Promise<void> {
-  const events = adaptClaudeCodePostToolUse(payload);
+/**
+ * Codex `PostToolUse` handler — identical record+pin as Claude, only the adapter
+ * differs (Codex lifecycle payload → canonical events). The baseline-pin logic is
+ * reused unchanged: Codex shares the canonical `.blastcheck/` evidence (FR23).
+ */
+export async function runCodexPostToolUse(payload: unknown, cwd: string): Promise<void> {
+  return runPostToolUse(payload, cwd, adaptCodexPostToolUse);
+}
+
+async function recordEvents(
+  payload: unknown,
+  cwd: string,
+  adapt: PostToolUseAdapter,
+): Promise<void> {
+  const events = adapt(payload);
   const path = trajectoryPath(cwd);
   for (const event of events) {
     // Drop `step`: the loader assigns order by line position (a single-event
