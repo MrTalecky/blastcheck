@@ -110,25 +110,44 @@ channels — a write failure on either is logged but never changes the exit code
 | --------------- | ------ | ------------- |
 | Claude Code | Plug-and-play local hooks | `blastcheck init` installs `SessionStart`, `PostToolUse`, and `Stop` hooks for trajectory capture and audit. |
 | GitHub Actions | Plug-and-play CI gate | Use the composite Action from this repository in a PR workflow. |
-| Codex | Adapter ready, installer missing | Convert a Codex rollout/log with `blastcheck adapt --from codex <log>`, then pass the output to `blastcheck run --trajectory`. |
+| Codex | Plug-and-play local hooks (one-time `/hooks` trust review) | `blastcheck init --agent codex` installs `.codex/hooks.json` with `SessionStart`, `PostToolUse`, and `Stop` hooks for trajectory capture and session-end audit. |
 | Cursor | Adapter ready, installer missing | Convert a Cursor stream/log with `blastcheck adapt --from cursor <log>`, then audit the generated trajectory. |
 | Aider | Adapter ready, installer missing | Convert `.aider.chat.history.md` with `blastcheck adapt --from aider <log>`, then audit the generated trajectory. |
 
-### Codex today
+### Codex
 
-Codex support is available as a log adapter, not as a BMad-style one-command
-installation. The current flow is:
+Codex is installer-first — the same install-once-then-work-normally model as
+Claude Code. Install the lifecycle hooks once:
+
+```bash
+blastcheck init --agent codex   # writes .codex/hooks.json
+```
+
+This writes project-local `.codex/hooks.json` with three lifecycle commands —
+`SessionStart`, `PostToolUse`, and `Stop` — that capture the trajectory as you
+work and run the audit at session end, mirroring the latest scorecard to
+`.blastcheck/scorecard.json`. You then work normally in Codex; there is no
+per-change audit command to remember.
+
+Codex requires you to review and trust the installed command hooks via its
+`/hooks` review before they run — `blastcheck status` surfaces this as a pending
+**review hooks in Codex `/hooks`** action until you do.
+
+#### Importing an existing Codex log (fallback)
+
+If you already have a Codex rollout/log — for a one-off audit, or for CI where the
+hooks aren't installed — convert it to the common trajectory with `adapt`. This is
+**not** the main path; the lifecycle-hooks installer above is the recommended Codex
+setup.
 
 ```bash
 blastcheck adapt --from codex codex-rollout.jsonl > trajectory.jsonl
 blastcheck run --baseline <sha> --trajectory trajectory.jsonl
 ```
 
-That enables the same trajectory checks as other agents once you have the Codex
-log file. What is not implemented yet: `blastcheck init --agent codex` or equivalent
-setup that wires blastcheck directly into Codex, finds the active rollout file,
-captures a baseline, and runs the audit automatically at the end of a Codex
-session.
+`adapt` writes the common trajectory JSONL to **stdout** (diagnostics go to
+stderr). Cursor and Aider logs are imported the same way
+(`adapt --from cursor|aider`).
 
 ### Exit codes
 
