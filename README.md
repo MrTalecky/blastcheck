@@ -181,6 +181,12 @@ in git-only mode, posts the scorecard as a PR comment, and fails the check on a
 `fail` verdict (or tool error). With branch protection on the check, a failed
 audit blocks merge.
 
+The Action runs the **same shared audit core** as the local installers — it
+shells out to the single public `blastcheck` audit path (the built CLI), so a PR
+is graded by the identical engine, not a separate CI implementation. The only
+difference is the evidence level: the Action runs **git-only**, so the three
+trajectory checks are reported `skipped` (see [Evidence levels](#evidence-levels)).
+
 Consumer workflow:
 
 ```yaml
@@ -233,6 +239,41 @@ jobs:
 - **`fetch-depth: 0` is required.** A shallow clone makes `merge-base` and
   `git show <baseline>:task.md` fail, surfacing as exit `2` (a red check from
   infrastructure, not the verdict).
+
+### Deferred
+
+CI `init`/story-bootstrap is **deferred beyond this milestone** — *planned, not
+abandoned*. There is **no working `blastcheck init --agent github`**: the `github` agent
+id is registered (it appears in `init --help`), but its installer is unimplemented
+and errors with `github installer is not implemented yet; planned after this
+milestone`. Consume the Action as a composite Action in a workflow (above), not
+via `init`.
+
+Manual **`adapt` remains available, but is not the primary setup path.**
+`blastcheck adapt --from <agent> <log>` is the import/fallback for agents without
+a native installer — the Codex fallback (see [Codex](#codex)) and Cursor/Aider
+(see the [integration matrix](#agent-integration-status)). Installer-first `init`
+is the main product path.
+
+## Non-goals (this milestone)
+
+What the installer-first milestone deliberately does **not** ship. These are
+*this-milestone* boundaries, not permanent bans:
+
+- **No daemon / long-running service.** `blastcheck` is a one-shot CLI invoked by
+  hooks/CI; it opens no socket and runs no background service (NFR10, enforced by
+  `src/contracts.test.ts`).
+- **No database / persistent history store.** The tool is stateless: it audits
+  from a supplied trajectory + baseline and writes a single
+  `.blastcheck/scorecard.json`, keeping no historical database (NFR3, NFR11).
+- **No MCP-first enforcement.** Enforcement is hook/CLI/CI-driven; MCP is not the
+  primary enforcement path for this milestone (NFR12).
+- **No rollout-log scraping as the primary Codex UX.** Codex is lifecycle-hooks
+  first (`init --agent codex`); `adapt --from codex` on a rollout log is the
+  fallback, not the main path (NFR13; see [Codex](#codex)).
+- **No VS Code / Cursor extension packaging.** There is no editor-extension
+  distribution this milestone; Cursor/Aider are reached via `adapt` import only
+  (NFR14; see the [integration matrix](#agent-integration-status)).
 
 ## Development
 
