@@ -9,11 +9,49 @@ ran, and more. The verdict is a machine-readable scorecard plus a process exit
 code, so it slots into hooks and CI gates.
 
 > **Status: v1 implemented for local use and CI.** The git-only checks, trajectory
-> checks, audit runner, `scorecard.json` output, Claude Code hooks installer,
-> cross-agent trajectory adapters, and composite GitHub Action are implemented.
-> The main remaining integration gap is a one-command Codex installer: Codex logs
-> can be adapted and audited today, but `blastcheck init` does not yet install
-> Codex-specific hooks or automatically discover Codex rollout files.
+> checks, audit runner, `scorecard.json` output, one-command agent installers
+> (Claude Code, Codex, OpenCode), cross-agent trajectory adapters, and composite
+> GitHub Action are implemented. Setup is installer-first — see **Quick start**
+> below.
+
+## Quick start
+
+Setup is **installer-first**: you install blastcheck into your agent once, then
+work normally inside that agent. The installed hooks/plugin capture the
+trajectory and run the audit automatically at the end of each session — there is
+no per-change audit command to remember.
+
+**1. Choose your agent and install once.**
+
+```bash
+blastcheck init --agent claude-code   # writes .claude/settings.json hooks
+blastcheck init --agent codex         # writes .codex/hooks.json
+blastcheck init --agent opencode      # writes .opencode/plugins/blastcheck.ts
+```
+
+Each command installs that agent's hooks/plugin; the Claude Code installer also
+adds `.blastcheck/` to your `.gitignore`. Bare `blastcheck init` (no `--agent`)
+keeps the Claude Code default. Codex additionally asks you to trust the installed
+hooks via its `/hooks` review before they run.
+
+**2. Work normally in your agent.** Make changes through Claude Code, Codex, or
+OpenCode as you usually would. The installed hooks/plugin capture the trajectory
+and run the audit at session end — you don't invoke an audit command per change.
+
+**3. Check readiness any time.**
+
+```bash
+blastcheck status
+```
+
+`status` reports the installed integrations, captured evidence, and readiness on
+**stderr** (stdout stays reserved for scorecard JSON). It is read-only and always
+exits `0`.
+
+When an agent session ends, the `Stop`/idle hook runs the audit and emits a
+**scorecard**. The latest scorecard is persisted at **`.blastcheck/scorecard.json`**
+— the on-disk evidence of the most recent run, and the same file
+`blastcheck status` surfaces.
 
 ## Checks
 
@@ -57,7 +95,8 @@ blastcheck run --baseline <sha> --out scorecard.json --comment comment.md
 # Include an agent trajectory (enables the trajectory checks).
 blastcheck run --baseline <sha> --trajectory trace.jsonl
 
-# Install the Claude Code hooks (trajectory capture + audit on Stop).
+# Install blastcheck into your agent (installer-first setup — see Quick start).
+# Bare `init` defaults to Claude Code; use `--agent codex|opencode` for others.
 blastcheck init
 ```
 
