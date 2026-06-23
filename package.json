@@ -2,6 +2,7 @@
   "name": "blastcheck",
   "version": "0.2.0",
   "description": "Audit AI coding-agent changes against a contract: git-only and trajectory checks.",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "blastcheck": "./dist/cli.js"
