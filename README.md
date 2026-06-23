@@ -37,8 +37,12 @@ hooks via its `/hooks` review before they run.
 **2. Work normally in your agent.** Make changes through Claude Code, Codex, or
 OpenCode as you usually would. The installed hooks/plugin capture the trajectory
 and run the audit at session end — you don't invoke an audit command per change.
+At the end of each turn the verdict is **pushed to you natively**: a brief line
+(or toast) on every result, quiet on `pass`, plus a desktop alert on `fail`. You
+no longer have to remember to check — see [Verdict surfacing](#verdict-surfacing).
 
-**3. Check readiness any time.**
+**3. Check readiness any time.** (The pull signal, still here alongside the push
+signal above.)
 
 ```bash
 blastcheck status
@@ -113,7 +117,7 @@ invalid input degrades to safe defaults (with a warning), never an error.
 | Source | Owns | Trust model |
 | ------ | ---- | ----------- |
 | `task.md` (read from the **baseline** commit) | `allow` (in-scope paths) and `goal` | Pinned to the baseline via `git show <baseline>:task.md`. HEAD is never consulted, so the agent cannot rewrite its own promise after the fact. |
-| `.blastcheck.yml` (working tree, optional) | `deny`, `budget`, `thresholds`, `required_checks` | The human's optional override layer. |
+| `.blastcheck.yml` (working tree, optional) | `deny`, `budget`, `thresholds`, `required_checks`, `surfacing` | The human's optional override layer. |
 | Repo manifests (`package.json`, `pyproject.toml`, `Makefile`) | autodetected `required_checks` | Auto-detected QA scripts (`test`/`lint`/`typecheck`) become **soft** gates; a `.blastcheck.yml` entry upgrades a check to a **hard** gate. |
 
 **Scope lives in `task.md`, not `.blastcheck.yml`.** Declare it as YAML
@@ -147,7 +151,90 @@ budget:
   max_churn_pct: 15
 required_checks:
   - "npm test"
+surfacing:
+  feedback: false # inject the verdict back to the agent on warn/fail (opt-in)
+  block: false    # hard-block a fail — Claude Code / Codex only (opt-in)
 ```
+
+Both `surfacing` flags default `false`; they tune the end-of-turn egress layer,
+never the verdict itself. See
+[Feedback and blocking (opt-in)](#feedback-and-blocking-opt-in) for what they do,
+the env-var overrides, and the OpenCode no-op caveat.
+
+## Verdict surfacing
+
+At the end of every turn the audit doesn't just write a file — it **pushes the
+verdict to you in your agent's own idiom**. The picture:
+
+- **`pass` is quiet:** one brief confirmation line — no desktop alert, no feedback.
+- **`warn` shows a visible line** (a toast in OpenCode), no desktop alert.
+- **`fail` is impossible to miss:** the visible line **plus** a desktop alert (on
+  macOS/Linux; on other platforms the alert degrades quietly and the visible line
+  still shows).
+
+This is the **push** signal — you no longer have to remember to run `blastcheck
+status` or open the scorecard. Both **pull** signals still exist: `status`
+(stderr, exits `0`) and the persisted `.blastcheck/scorecard.json` are there
+whenever you want to inspect a run.
+
+**The scorecard stays the source of truth.** It is written to
+`.blastcheck/scorecard.json` **before** any surfacing happens — surfacing is a
+presentation layer on top of that file, never a replacement for it. No history
+database is introduced; each run overwrites the one scorecard, and every channel
+degrades quietly if it isn't available.
+
+The visible line reads the same across every agent (the glyph signals the
+verdict; `fail` is upper-cased for scannability, `pass`/`warn` stay lower-case):
+
+```text
+blastcheck: ✓ pass — all clear
+blastcheck: ‼ warn — 2 findings
+blastcheck: ✗ FAIL — scope-adhesion failed; 1 finding
+```
+
+### Per-agent behavior
+
+The verdict is the same everywhere; only the **channel** differs per agent (these
+mechanism names match the installed hooks/plugin — cross-reference the
+[Agent integration status](#agent-integration-status) matrix for setup):
+
+| Channel | Claude Code | Codex | OpenCode |
+| ------- | ----------- | ----- | -------- |
+| Visible line on **every** verdict (brief on `pass`) | `systemMessage` | `systemMessage` | TUI toast (`client.tui.showToast`) |
+| Desktop alert on **`fail` only** | `terminalSequence` (OSC 9 + terminal bell) | user-level `notify` → `blastcheck notify codex` → desktop alert | `osascript` / `notify-send`, fired CLI-side |
+| Opt-in **feedback** (`warn`/`fail` only, never `pass`) | `hookSpecificOutput.additionalContext` | `hookSpecificOutput.additionalContext` | `client.session.prompt` |
+| Opt-in hard **block** (`fail` only) | `decision: "block"` | `decision: "block"` | **not implemented (no-op in v1)** |
+
+The visible line, feedback, and block all travel in the hook's stdout JSON on a
+clean exit `0` (Claude Code / Codex) — the exit code is never used to carry the
+verdict. The Codex `fail` alert is the one exception that rides a separate
+channel; see [Codex](#codex) for why and how to set it up.
+
+### Feedback and blocking (opt-in)
+
+Two optional behaviors widen surfacing beyond the visible line. **Both are opt-in
+and default OFF**, and both only ever fire on `warn`/`fail` — **never on `pass`**:
+
+| Flag | `.blastcheck.yml` | Env override (wins over the file) |
+| ---- | ----------------- | --------------------------------- |
+| `feedback` | `surfacing: { feedback: true }` | `BLASTCHECK_FEEDBACK` |
+| `block` | `surfacing: { block: true }` | `BLASTCHECK_BLOCK` |
+
+The env var wins over the file, so a one-off run can override the persistent
+choice. Truthy tokens are `1` / `true` / `yes` / `on`; falsy tokens are `0` /
+`false` / `no` / `off`.
+
+- **Feedback** injects the verdict detail back into the agent's own context
+  (Claude Code / Codex `additionalContext`; OpenCode a follow-up
+  `session.prompt`) so the agent can act on it. **Caveat — the feedback loop:** an
+  injected prompt can start a new turn → which re-runs the audit → which can feed
+  the still-failing verdict back again. This is exactly why feedback is
+  opt-in/default-OFF; it converges naturally once the agent fixes the issue.
+- **Block** turns a `fail` into a hard stop (Claude Code / Codex `decision:
+  "block"` + a reason). It is meant for CI-style gating and is off by default so a
+  normal local session is never blocked. **OpenCode does not implement the hard
+  block in v1 — `block` is a no-op there** (no parity is implied); the reporter
+  interface can take a CI opt-in later.
 
 ## Agent integration status
 
@@ -194,6 +281,32 @@ per-change audit command to remember.
 Codex requires you to review and trust the installed command hooks via its
 `/hooks` review before they run — `blastcheck status` surfaces this as a pending
 **review hooks in Codex `/hooks`** action until you do.
+
+#### Desktop fail-alert (user-level `notify`)
+
+The Codex visible verdict line rides the hooks above, but the **`fail` desktop
+alert** travels a different channel: a project-local `.codex/config.toml`
+**ignores** Codex's `notify` setting, so blastcheck writes the **user-level**
+`~/.codex/config.toml` instead. As part of `init --agent codex` it adds, idempotently:
+
+```toml
+notify = ["blastcheck", "notify", "codex"]
+```
+
+This points Codex's turn-complete `notify` program at `blastcheck notify codex`,
+which raises a desktop notification only on a `fail` verdict (silent no-op otherwise).
+
+- **If a different user-level `notify` already exists**, blastcheck **leaves it
+  untouched** and prints a manual step instead — point `notify` at
+  `["blastcheck", "notify", "codex"]` yourself. Codex's `notify` is a single
+  program, so to keep your existing one you'd wrap both behind a small script that
+  calls each in turn. Single-command install is
+  preserved where it can be, with an explicit fallback where it can't.
+- **Migration:** existing Codex installs from before the surfacing layer must
+  **re-run `blastcheck init --agent codex`** once to pick up this user-level
+  `notify` line. This does **not** require a Codex `/hooks` re-trust — the hook
+  *definitions* are unchanged; only the user-level config file gains a line.
+  (Changing a hook *definition* would force a re-trust; the reporter touched none.)
 
 #### Importing an existing Codex log (fallback)
 
