@@ -1,7 +1,6 @@
 name: blastcheck
 description: >-
-  Audit an AI coding-agent PR against its contract (git-only mode): post the
-  scorecard as a PR comment and fail the check on a `fail` verdict.
+  Audit AI coding-agent PR changes against a contract (git-only): posts a scorecard comment, fails on a fail verdict.
 branding:
   icon: shield
   color: purple
