@@ -45,19 +45,36 @@ describe("buildClaudeCodeStopOutput", () => {
       ctx("warn", { findings: [{ severity: "warn", check: "churn", message: "x" }] }),
       opts(),
     );
-    expect(out.systemMessage).toBe("blastcheck: ‼ warn — 1 finding");
+    expect(out.systemMessage).toBe("blastcheck: ‼ warn — 1 warn · 1 files, churn 0.0%");
     expect(out.terminalSequence).toBeUndefined();
   });
 
-  it("fail: a visible line PLUS a terminalSequence desktop alert (BEL + OSC 9)", () => {
+  it("gate fail: a visible line PLUS a terminalSequence desktop alert (BEL + OSC 9)", () => {
     const out = buildClaudeCodeStopOutput(
       ctx("fail", { gates: { "denied-files": "fail" } }),
       opts(),
     );
-    const headline = "blastcheck: ✗ FAIL — denied-files failed";
+    const headline = "blastcheck: ✗ FAIL — denied-files failed · 1 files, churn 0.0%";
     expect(out.systemMessage).toBe(headline);
     // A terminal bell (BEL), then an OSC 9 desktop notification carrying the headline.
     expect(out.terminalSequence).toBe(`${BEL}${ESC}]9;${headline}${BEL}`);
+  });
+
+  it("score-driven fail (no gate failed): calm dense line, NO desktop alert (FR3/NFR5)", () => {
+    // A sub-floor score with no failed gate is a score-driven fail: dense line, but
+    // silent at the alert channel because raw thresholds are uncalibrated.
+    const out = buildClaudeCodeStopOutput(
+      ctx("fail", {
+        gates: {},
+        scores: { scope_adherence: 0.2 },
+        findings: [{ severity: "high", check: "scope-adhesion", message: "out of scope" }],
+      }),
+      opts(),
+    );
+    expect(out.systemMessage).toBe(
+      "blastcheck: ✗ FAIL — scope_adherence below floor · 1 high · 1 files, churn 0.0%",
+    );
+    expect(out.terminalSequence).toBeUndefined();
   });
 
   it("feedback opt-in: adds additionalContext on a fail; default off adds nothing", () => {

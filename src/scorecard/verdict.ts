@@ -39,6 +39,20 @@ export const DEFAULT_HARD_FLOORS: Record<string, number> = {
 };
 
 /**
+ * Hard floors re-keyed by the snake_case score id used at the `scorecard.json`
+ * boundary (`scope_adherence`, `tool_efficiency`) — derived from
+ * {@link DEFAULT_HARD_FLOORS} so the floor VALUES stay single-sourced and never
+ * drift. The shared `verdict-text` renderer needs to name a sub-floor dimension
+ * from a `Scorecard` (whose `scores` keys are snake_case), but cannot reach
+ * `serialize.ts`'s private `camelToSnake` without a circular import — so the
+ * conversion is duplicated here (one-directional: `verdict-text` → `verdict`).
+ */
+const camelToSnake = (k: string): string => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+export const HARD_FLOOR_BY_SCORE_ID: Record<string, number> = Object.fromEntries(
+  Object.entries(DEFAULT_HARD_FLOORS).map(([camel, v]) => [camelToSnake(camel), v]),
+);
+
+/**
  * Score-producing checks → their camelCase score id (spec §4.1). The SINGLE
  * source of truth for the `CheckId`↔scoreId mapping, reused by `serialize.ts`.
  *

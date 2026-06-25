@@ -104,6 +104,34 @@ describe("renderPrComment", () => {
     expect(summary).toContain("```we``ird/`name`.ts```");
   });
 
+  it("does NOT route the headline through the shared verdict-text renderer (AC2 lock)", () => {
+    // The CI PR comment must stay byte-stable independent of the `verdict-text`
+    // rewrite (FR4). markdown.ts has its own renderer and does NOT import
+    // verdict-text, so a representative fail — gate fail + sub-floor score +
+    // mixed findings — renders with markdown.ts's own `## blastcheck: ✗ FAIL`
+    // header and NONE of verdict-text's dense-line artifacts (the ` · ` segment
+    // joiner, the `— <reason>` headline, or `below floor`). If a future
+    // shared-helper refactor silently routed this through verdict-text, this fires.
+    const md = renderPrComment(
+      scorecard("fail", {
+        gates: { "denied-files": "fail" },
+        scores: { scope_adherence: 0.2 },
+        findings: [
+          { check: "denied-files", severity: "high", message: "touched .env", path: ".env" },
+          { check: "churn", severity: "warn", message: "high churn" },
+        ],
+      }),
+    );
+    // markdown.ts's own header form — not the verdict-text dense headline.
+    expect(md).toContain("## blastcheck: ✗ FAIL");
+    expect(md).not.toContain("✗ FAIL —");
+    expect(md).not.toContain(" · ");
+    expect(md).not.toContain("below floor");
+    expect(md).not.toContain("denied-files failed");
+    // Two renders of the same scorecard are byte-identical (pure, deterministic).
+    expect(renderPrComment(scorecard("fail"))).toBe(renderPrComment(scorecard("fail")));
+  });
+
   it("does not leak camelCase scorecard keys into the markdown", () => {
     const md = renderPrComment(scorecard("warn"));
     for (const leak of ["schemaVersion", "baselineSha", "headSha", "taskGoal", "evidenceLevel"]) {
