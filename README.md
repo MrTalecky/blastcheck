@@ -52,10 +52,21 @@ blastcheck status
 **stderr** (stdout stays reserved for scorecard JSON). It is read-only and always
 exits `0`.
 
+To read the **last verdict itself** (instead of `cat`-ing the JSON), use:
+
+```bash
+blastcheck show
+```
+
+`show` renders the latest `.blastcheck/scorecard.json` in the same human-readable
+form as the end-of-turn summary, but to **stdout** — it is a *pull* command, so its
+render is the payload. With no scorecard yet (or an unreadable one) it prints a
+short notice to stderr and still exits `0`; it never crashes.
+
 When an agent session ends, the `Stop`/idle hook runs the audit and emits a
 **scorecard**. The latest scorecard is persisted at **`.blastcheck/scorecard.json`**
 — the on-disk evidence of the most recent run, and the same file
-`blastcheck status` surfaces.
+`blastcheck status` and `blastcheck show` surface.
 
 ## Checks
 
@@ -102,6 +113,9 @@ blastcheck run --baseline <sha> --trajectory trace.jsonl
 # Install blastcheck into your agent (installer-first setup — see Quick start).
 # Bare `init` defaults to Claude Code; use `--agent codex|opencode` for others.
 blastcheck init
+
+# Render the last scorecard in human-readable form (to stdout — a pull command).
+blastcheck show
 ```
 
 `stdout` is reserved for the `scorecard.json`; all diagnostics (and the
@@ -173,9 +187,9 @@ verdict to you in your agent's own idiom**. The picture:
   still shows).
 
 This is the **push** signal — you no longer have to remember to run `blastcheck
-status` or open the scorecard. Both **pull** signals still exist: `status`
-(stderr, exits `0`) and the persisted `.blastcheck/scorecard.json` are there
-whenever you want to inspect a run.
+status` or open the scorecard. The **pull** signals still exist for when you want
+to inspect a run: `status` (readiness, stderr, exits `0`), `show` (the last
+verdict rendered to stdout), and the persisted `.blastcheck/scorecard.json` itself.
 
 **The scorecard stays the source of truth.** It is written to
 `.blastcheck/scorecard.json` **before** any surfacing happens — surfacing is a
