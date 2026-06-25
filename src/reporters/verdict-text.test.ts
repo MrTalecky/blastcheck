@@ -25,15 +25,15 @@ describe("verdictHeadline", () => {
     expect(verdictHeadline(scorecard({ verdict: "pass" }))).toBe("blastcheck: ✓ pass — all clear");
   });
 
-  it("warn counts findings", () => {
+  it("warn leads with the severity-mix, then git scale", () => {
     const sc = scorecard({
       verdict: "warn",
       findings: [{ severity: "warn", check: "churn", message: "high churn" }],
     });
-    expect(verdictHeadline(sc)).toBe("blastcheck: ‼ warn — 1 finding");
+    expect(verdictHeadline(sc)).toBe("blastcheck: ‼ warn — 1 warn · 0 files, churn 0.0%");
   });
 
-  it("fail leads with the failed gate, then the finding count, and upper-cases FAIL", () => {
+  it("fail leads with the failed gate · severity-mix · scale, and upper-cases FAIL", () => {
     const sc = scorecard({
       verdict: "fail",
       gates: { "denied-files": "fail", churn: "pass" },
@@ -42,12 +42,45 @@ describe("verdictHeadline", () => {
         { severity: "warn", check: "churn", message: "churn" },
       ],
     });
-    expect(verdictHeadline(sc)).toBe("blastcheck: ✗ FAIL — denied-files failed; 2 findings");
+    expect(verdictHeadline(sc)).toBe(
+      "blastcheck: ✗ FAIL — denied-files failed · 1 high, 1 warn · 0 files, churn 0.0%",
+    );
   });
 
-  it("falls back when a non-pass verdict has no gates or findings", () => {
+  it("names a sub-floor score as a failing dimension (not a gate)", () => {
+    // scope_adherence (0.2) is below its 0.5 hard floor → a score-driven fail with
+    // no failed gate; the dimension is named from the snake_case score id.
+    const sc = scorecard({
+      verdict: "fail",
+      scores: { scope_adherence: 0.2 },
+      findings: [{ severity: "high", check: "scope-adhesion", message: "out of scope" }],
+    });
+    expect(verdictHeadline(sc)).toBe(
+      "blastcheck: ✗ FAIL — scope_adherence below floor · 1 high · 0 files, churn 0.0%",
+    );
+  });
+
+  it("renders the severity-mix loudest-first (high → warn → info), omitting zero buckets", () => {
+    const sc = scorecard({
+      verdict: "fail",
+      findings: [
+        { severity: "info", check: "churn", message: "i" },
+        { severity: "high", check: "denied-files", message: "h" },
+        { severity: "warn", check: "churn", message: "w1" },
+        { severity: "warn", check: "churn", message: "w2" },
+      ],
+    });
+    // Insertion order is info→high→warn→warn, but the render is high→warn→info.
+    expect(verdictHeadline(sc)).toBe(
+      "blastcheck: ✗ FAIL — 1 high, 2 warn, 1 info · 0 files, churn 0.0%",
+    );
+  });
+
+  it("non-pass with no gates or findings still carries the scale segment", () => {
+    // The always-present scale segment means `reason()` is never empty for a
+    // non-pass verdict, so the `see scorecard` fallback no longer fires here.
     expect(verdictHeadline(scorecard({ verdict: "warn" }))).toBe(
-      "blastcheck: ‼ warn — see scorecard",
+      "blastcheck: ‼ warn — 0 files, churn 0.0%",
     );
   });
 });

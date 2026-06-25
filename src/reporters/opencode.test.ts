@@ -49,7 +49,7 @@ describe("buildOpencodeSurface", () => {
       ctx("warn", { findings: [{ severity: "warn", check: "churn", message: "x" }] }),
       opts(),
     );
-    expect(surface.message).toBe("blastcheck: ‼ warn — 1 finding");
+    expect(surface.message).toBe("blastcheck: ‼ warn — 1 warn · 1 files, churn 0.0%");
     expect(surface.variant).toBe("warning");
     expect(surface.feedback).toBeUndefined();
   });
@@ -59,7 +59,7 @@ describe("buildOpencodeSurface", () => {
       ctx("fail", { gates: { "denied-files": "fail" } }),
       opts(),
     );
-    expect(surface.message).toBe("blastcheck: ✗ FAIL — denied-files failed");
+    expect(surface.message).toBe("blastcheck: ✗ FAIL — denied-files failed · 1 files, churn 0.0%");
     expect(surface.variant).toBe("error");
     expect(surface.feedback).toBeUndefined();
     expect(Object.keys(surface)).toEqual(["message", "variant"]);

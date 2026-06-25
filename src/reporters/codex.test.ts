@@ -42,7 +42,7 @@ describe("buildCodexStopOutput", () => {
       ctx("warn", { findings: [{ severity: "warn", check: "churn", message: "x" }] }),
       opts(),
     );
-    expect(out.systemMessage).toBe("blastcheck: ‼ warn — 1 finding");
+    expect(out.systemMessage).toBe("blastcheck: ‼ warn — 1 warn · 1 files, churn 0.0%");
     // Codex Stop output has no alert primitive — never a terminalSequence.
     expect(out.terminalSequence).toBeUndefined();
     expect(out.hookSpecificOutput).toBeUndefined();
@@ -51,7 +51,9 @@ describe("buildCodexStopOutput", () => {
 
   it("fail: systemMessage ONLY — no terminalSequence/alert field (alert rides notify, not this output)", () => {
     const out = buildCodexStopOutput(ctx("fail", { gates: { "denied-files": "fail" } }), opts());
-    expect(out.systemMessage).toBe("blastcheck: ✗ FAIL — denied-files failed");
+    expect(out.systemMessage).toBe(
+      "blastcheck: ✗ FAIL — denied-files failed · 1 files, churn 0.0%",
+    );
     expect(out.terminalSequence).toBeUndefined();
     // Default (passive) fail carries no feedback/block either.
     expect(out.hookSpecificOutput).toBeUndefined();

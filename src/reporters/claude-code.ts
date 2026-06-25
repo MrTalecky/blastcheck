@@ -12,10 +12,11 @@
  *    `.claude/settings.json` (NOT a plugin), so the issue #50542 plugin-render
  *    regression does not apply and `systemMessage` renders. Verified channel
  *    against Claude Code v2.1.185.
- *  - `terminalSequence` — a desktop alert (BEL + OSC 9) on `fail` ONLY (§7.1:
- *    alert only on fail). Both sequences are on Claude Code's allowlist and need
- *    v2.1.141+. Plugin-safe, so it also doubles as the fail backstop if a future
- *    version regresses `systemMessage`.
+ *  - `terminalSequence` — a desktop alert (BEL + OSC 9) on a fail **from a gate**
+ *    only (FR3/NFR5: a score-driven fail stays calm and silent at this channel,
+ *    same as a warn — raw thresholds are uncalibrated). Both sequences are on
+ *    Claude Code's allowlist and need v2.1.141+. Plugin-safe, so it also doubles
+ *    as the gate-fail backstop if a future version regresses `systemMessage`.
  *  - `hookSpecificOutput.additionalContext` — feeds the verdict back to Claude on
  *    warn/fail when `feedback` is enabled (opt-in, §7.2; needs v2.1.163+).
  *  - `decision: "block"` + `reason` — hard-blocks a `fail` when `block` is enabled
@@ -53,7 +54,13 @@ export function buildClaudeCodeStopOutput(
 
   if (scorecard.verdict === "pass") return out; // brief positive line only — no alert/feedback
 
-  if (scorecard.verdict === "fail") out.terminalSequence = failAlert(headline);
+  // Loud (desktop alert) ONLY on a gate-driven fail — `denied-files`/`required-checks`,
+  // the deterministic hard gates. A score-driven fail (churn 2×, a sub-floor score, a
+  // high-severity finding) leaves `gates` with no `"fail"` entry, so it stays in the calm
+  // dense-line tier (NFR5: never speak loudly on a judgment the tool itself flags as
+  // uncalibrated). The gate-fail branch's push upgrade is Story 1.3.
+  const isGateFail = Object.values(scorecard.gates).some((s) => s === "fail");
+  if (scorecard.verdict === "fail" && isGateFail) out.terminalSequence = failAlert(headline);
 
   // `block` only ever applies to a fail (warn never blocks, spec §4). When it
   // does, `decision: "block"` already feeds `reason` back to Claude and forces a
