@@ -99,6 +99,20 @@ describe("loop-detection", () => {
     expect(evidenceKinds(result)).toContain("action");
   });
 
+  it("does NOT flag repeated reads of one file as an action loop", () => {
+    const result = check.run(
+      ctxOf([
+        { tool: "Read", args: { path: "src/cli.ts" }, step: 1 },
+        { tool: "Read", args: { path: "src/cli.ts" }, step: 2 },
+        { tool: "Read", args: { path: "src/cli.ts" }, step: 3 },
+      ]),
+    );
+    // Re-reading is inspection, not spinning — progress stays 1.0.
+    expect(result.status).toBe("pass");
+    expect(result.score).toBe(1);
+    expect(evidenceKinds(result)).not.toContain("action");
+  });
+
   it("flags a stuck loop (same non-zero exit code in a row)", () => {
     const result = check.run(
       ctxOf([

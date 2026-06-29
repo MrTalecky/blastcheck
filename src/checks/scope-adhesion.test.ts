@@ -55,7 +55,20 @@ describe("scope-adhesion", () => {
     expect(result.findings).toHaveLength(5);
   });
 
-  it("does not score a small changeset, lists out-of-scope as info (noise guard)", () => {
+  it("emits score 1.0 for a fully in-scope small changeset (clean green, not silence)", () => {
+    const ctx: CheckContext = {
+      contract: contract(),
+      diff: diff("src/a.ts", "src/b.ts"),
+    };
+
+    const result = check.run(ctx);
+
+    expect(result.status).toBe("pass");
+    expect(result.score).toBe(1);
+    expect(result.findings).toEqual([]);
+  });
+
+  it("does not score a small changeset with out-of-scope files, lists them as info (noise guard)", () => {
     const ctx: CheckContext = {
       contract: contract(),
       diff: diff("src/a.ts", "docs/x.md"),

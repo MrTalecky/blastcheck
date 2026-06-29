@@ -4,8 +4,12 @@
  * Only QA signals are extracted — `test` / `lint` / `typecheck`. Operational
  * scripts (`build` / `dev` / `start` / `format` / `serve` / `watch` / `clean`)
  * are NOT QA gates and are excluded, even when they appear as a sub-token of a
- * QA-looking name (e.g. `tsc:watch`). Everything found here is `source: 'auto'`
- * → a SOFT gate (a human-authored `.blastcheck.yml` entry makes a HARD gate).
+ * QA-looking name (e.g. `tsc:watch`). MUTATING variants are excluded too — a
+ * `fix`/`write` token (`lint:fix`) or a `--fix`/`--write` command body rewrites
+ * files instead of verifying them, so autodetect keeps the read-only QA only.
+ * Everything found here is `source: 'auto'` → a SOFT gate (a human-authored
+ * `.blastcheck.yml` entry makes a HARD gate, mutating or not — the auto-layer
+ * filter never overrides an explicit choice).
  *
  * Best-effort and degrading (consistency rule #6): a missing manifest is skipped
  * silently; an unreadable/unparseable one is logged and skipped — autodetect
@@ -25,15 +29,22 @@ type QaCategory = "test" | "lint" | "typecheck";
 /** Names that are explicitly NOT QA gates (spec §2.5). */
 const EXCLUDED = new Set(["build", "dev", "start", "format", "serve", "watch", "clean"]);
 
+/** Tokens that mark a script as MUTATING (rewrites files) rather than verifying. */
+const MUTATING = new Set(["fix", "write"]);
+
+/** A command body that rewrites in place (`--fix`/`--write`) is not a QA gate. */
+const MUTATING_FLAG = /--(?:fix|write)\b/;
+
 /**
- * Classify a script/target name into a QA category. Token-aware so `test:unit`,
- * `lint:fix` and `type-check` are caught; an operational token anywhere in the
- * name (e.g. `tsc:watch`, `lint:dev`) disqualifies it — a long-running watch is
- * not a one-shot QA gate.
+ * Classify a script/target name into a QA category. Token-aware so `test:unit`
+ * and `type-check` are caught; an operational token anywhere in the name (e.g.
+ * `tsc:watch`, `lint:dev`) disqualifies it — a long-running watch is not a
+ * one-shot QA gate — and a mutating token (`lint:fix`, `lint:write`) does too:
+ * a writer is not a checker.
  */
 function classifyName(name: string): QaCategory | null {
   const tokens = name.toLowerCase().split(/[:-]/);
-  if (tokens.some((t) => EXCLUDED.has(t))) return null;
+  if (tokens.some((t) => EXCLUDED.has(t) || MUTATING.has(t))) return null;
   // The leading token decides the category.
   const head = tokens[0] ?? "";
   if (head === "test" || head === "tests") return "test";
@@ -71,8 +82,10 @@ function fromPackageJson(content: string): RequiredCheck[] {
     return [];
   }
   const checks: RequiredCheck[] = [];
-  for (const key of Object.keys(scripts)) {
+  for (const [key, body] of Object.entries(scripts)) {
     if (classifyName(key) === null) continue;
+    // A read-only NAME can still wrap a mutating body (`"lint": "eslint . --fix"`).
+    if (typeof body === "string" && MUTATING_FLAG.test(body)) continue;
     // `npm test` is the canonical alias; everything else goes through `run`.
     const cmd = key === "test" ? "npm test" : `npm run ${key}`;
     checks.push({ cmd, source: "auto" });

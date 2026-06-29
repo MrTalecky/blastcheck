@@ -12,13 +12,17 @@
  *
  * Edge cases (spec §1.2), evaluated in this order:
  *  - `denom === 0` (changeset entirely forbidden OR empty) → `score` is null
- *    (omitted); the story is already decided by the gate. `status:'pass'`.
- *  - `0 < denom < SMALL_CHANGESET` → a ratio over 1–4 files is statistically
- *    noisy (1 file = 25%+), so we do NOT compute it; instead we list every
+ *    (omitted); there is nothing to measure adherence over and the story is
+ *    already decided by the gate. `status:'pass'`.
+ *  - `0 < denom < SMALL_CHANGESET` WITH out-of-scope files → a partial ratio over
+ *    1–4 files is statistically noisy (1 file = 25%+) and must not be thresholded
+ *    against the hard floor, so we do NOT compute it; instead we list every
  *    out-of-scope file as an `info` finding. `status:'pass'`.
- *  - `denom >= SMALL_CHANGESET` → `score = |in_scope| / denom`. An empty `allow`
- *    means everything non-forbidden is out_of_scope → `score = 0` (an honest
- *    penalty for no pre-commitment).
+ *  - otherwise → `score = |in_scope| / denom`. This INCLUDES a perfectly clean
+ *    small changeset (everything in scope → `score = 1.0`): a passing scope check
+ *    is emitted explicitly, never as silence — green must read as clearly as red.
+ *    An empty `allow` on a large changeset means everything non-forbidden is
+ *    out_of_scope → `score = 0` (an honest penalty for no pre-commitment).
  *
  * This check only PRODUCES the score; the warn/fail thresholds are applied by
  * the verdict engine in Story 1.4, never here.
@@ -54,12 +58,20 @@ function run(ctx: CheckContext): CheckResult {
     path,
   }));
 
-  // denom === 0 → forbidden-only or empty changeset: score is null (omitted).
-  // Small changeset → list out-of-scope as info, but do not score (too noisy).
-  if (denom === 0 || denom < SMALL_CHANGESET) {
+  // denom === 0 → forbidden-only or empty changeset: nothing to measure, score
+  // is null (omitted) — the gate already decides the story.
+  if (denom === 0) {
     return { check: "scope-adhesion", status: "pass", findings };
   }
 
+  // Small changeset WITH out-of-scope files → a noisy partial ratio: list the
+  // offenders as info and withhold the score rather than threshold 1–4 files.
+  if (denom < SMALL_CHANGESET && outOfScope.length > 0) {
+    return { check: "scope-adhesion", status: "pass", findings };
+  }
+
+  // Everything else is scored explicitly — including a fully in-scope small
+  // changeset (score 1.0), so a clean result surfaces instead of going silent.
   const score = inScope / denom;
   return { check: "scope-adhesion", status: "pass", score, findings };
 }

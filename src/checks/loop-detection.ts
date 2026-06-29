@@ -7,8 +7,11 @@
  *
  * Four patterns over the step-ordered events (`ctx.trajectory.events` is already
  * sorted by `step`):
- *  - ACTION LOOP: the same NON-recon `signature` appears ≥ `L` times within any
- *    window of `W` consecutive events.
+ *  - ACTION LOOP: the same NON-recon, NON-read-only `signature` appears ≥ `L`
+ *    times within any window of `W` consecutive events. Read-only tools (`Read`,
+ *    `Glob`, `Grep`, `LS`) are excluded — re-reading one file is normal during a
+ *    session and is not spinning; looping is defined by mutating/executing work
+ *    (`Edit`/`Write` churn, a repeating failed `Bash`), not by inspection.
  *  - STUCK LOOP: the same non-zero `exitCode` ≥ `L` times in a row. If NO event
  *    carries an exit code (`coverage.hasExitCode === false`), this sub-check is
  *    not run (per-field degradation, not a failure).
@@ -31,6 +34,14 @@ const E = 6;
 /** Consecutive steps with no new file path that constitute spinning. */
 const K = 10;
 
+/**
+ * Read-only tools — inspection, not action. Repeats are excluded from the
+ * action-loop signature: three `Read cli.ts` is normal, not a loop. (Redundant
+ * reads are still counted as waste by `extraneous-tool-calls`, which is the
+ * right place for that signal — here they must not zero out `progress`.)
+ */
+const READ_ONLY_TOOLS = new Set(["read", "glob", "grep", "ls"]);
+
 /** The normalized file path an event touches, or `null` if it is not a path event. */
 function filePath(event: TrajectoryEvent): string | null {
   const sig = signature(event);
@@ -46,6 +57,7 @@ function detectActionLoop(events: TrajectoryEvent[]): Finding | null {
     for (const event of window) {
       const sig = signature(event);
       if (sig.kind === "recon") continue;
+      if (READ_ONLY_TOOLS.has(event.tool.toLowerCase())) continue;
       const key = signatureKey(sig);
       const next = (counts.get(key) ?? 0) + 1;
       counts.set(key, next);
