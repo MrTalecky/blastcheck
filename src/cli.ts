@@ -85,6 +85,17 @@ export function buildProgram(outcome: Outcome): Command {
     .action(async (opts: RunOptions) => {
       setVerbose(Boolean(opts.verbose));
 
+      // `--baseline` flows verbatim into git's argv (`git diff <sha>`, etc.).
+      // git has no shell here (execFile + array args), so shell injection is
+      // impossible — but a leading `-` would be parsed as an OPTION, not a
+      // revision (e.g. `--output=<path>` makes `git diff` write an arbitrary
+      // file). Reject it up front; a commit-ish never starts with `-`.
+      if (opts.baseline.startsWith("-")) {
+        program.error("--baseline must be a commit-ish, not an option (leading '-')", {
+          exitCode: EXIT.TOOL_ERROR,
+        });
+      }
+
       const scorecard = await runAudit({
         baselineSha: opts.baseline,
         taskPath: opts.task,
