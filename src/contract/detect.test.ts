@@ -47,13 +47,23 @@ describe("detectRequiredChecks", () => {
     expect(cmds(checks)).toEqual(["npm test"]);
   });
 
-  it("catches namespaced QA scripts like test:unit and lint:fix", async () => {
+  it("catches namespaced QA scripts (test:unit) but excludes mutating variants (lint:fix)", async () => {
     await write(
       "package.json",
       JSON.stringify({ scripts: { "test:unit": "vitest", "lint:fix": "biome check --write" } }),
     );
     const checks = await detectRequiredChecks(dir);
-    expect(cmds(checks)).toEqual(["npm run lint:fix", "npm run test:unit"]);
+    // `lint:fix` rewrites files — a writer, not a checker — so it is dropped.
+    expect(cmds(checks)).toEqual(["npm run test:unit"]);
+  });
+
+  it("excludes a read-only-named script whose body mutates (--fix/--write)", async () => {
+    await write(
+      "package.json",
+      JSON.stringify({ scripts: { lint: "eslint . --fix", typecheck: "tsc --noEmit" } }),
+    );
+    const checks = await detectRequiredChecks(dir);
+    expect(cmds(checks)).toEqual(["npm run typecheck"]);
   });
 
   it("detects the Python toolchain from pyproject.toml", async () => {
