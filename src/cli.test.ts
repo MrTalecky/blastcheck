@@ -145,6 +145,14 @@ describe("cli main", () => {
     expect(runAuditMock).not.toHaveBeenCalled();
   });
 
+  it("run with a --baseline that looks like an option → exit 2, no audit", async () => {
+    // A leading '-' would be parsed by git as an option, not a revision (e.g.
+    // `--output=<path>` makes `git diff` write an arbitrary file). The guard
+    // rejects it before runAudit is ever reached.
+    await expect(main(argv("run", "--baseline", "--output=/tmp/x"))).resolves.toBe(EXIT.TOOL_ERROR);
+    expect(runAuditMock).not.toHaveBeenCalled();
+  });
+
   it("a pass verdict → exit 0 and scorecard.json on stdout", async () => {
     runAuditMock.mockResolvedValue(scorecard("pass"));
     await expect(main(argv("run", "--baseline", "abc"))).resolves.toBe(EXIT.OK);
