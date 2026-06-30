@@ -1,5 +1,6 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   cleanupRepo,
@@ -7,7 +8,8 @@ import {
   makeNonRepoDir,
   makeTempRepo,
 } from "../../tests/fixtures/repos/make-repo.js";
-import { currentHead, worktreeSignature } from "./git.js";
+import { currentHead, trajectorySignature, worktreeSignature } from "./git.js";
+import { trajectoryPath } from "./state.js";
 
 describe("hook git", () => {
   let repo: string;
@@ -76,6 +78,45 @@ describe("hook git", () => {
       } finally {
         await cleanupRepo(nonRepo);
       }
+    });
+  });
+
+  describe("trajectorySignature", () => {
+    // Computed, not a magic literal — the "no tool-calls" snapshot component.
+    const emptyHash = createHash("sha256").update("").digest("hex");
+
+    it('maps an ABSENT trajectory to the stable hash of "" (defined, not undefined)', async () => {
+      // A fresh repo has no .blastcheck/trajectory.jsonl: zero tool-calls is a
+      // valid snapshot component, not a "cannot tell".
+      expect(await trajectorySignature(repo)).toBe(emptyHash);
+    });
+
+    it("treats an EMPTY trajectory identically to an absent one", async () => {
+      const p = trajectoryPath(repo);
+      await mkdir(dirname(p), { recursive: true });
+      await writeFile(p, "");
+      expect(await trajectorySignature(repo)).toBe(emptyHash);
+    });
+
+    it("is a stable, distinct hash when the trajectory has content", async () => {
+      const p = trajectoryPath(repo);
+      await mkdir(dirname(p), { recursive: true });
+      await writeFile(p, '{"tool":"Read"}\n');
+
+      const first = await trajectorySignature(repo);
+      const second = await trajectorySignature(repo);
+      expect(first).toMatch(/^[0-9a-f]{64}$/);
+      expect(first).not.toBe(emptyHash);
+      expect(second).toBe(first); // deterministic across reads
+    });
+
+    it("returns undefined (cannot tell → surface) on a non-ENOENT read failure, never throws", async () => {
+      // Make the trajectory PATH a directory so readFile fails with EISDIR. An
+      // unreadable (not merely absent) trajectory must NOT collapse to the empty
+      // hash — that could falsely silence a real change (code review 2026-06-30).
+      const p = trajectoryPath(repo);
+      await mkdir(p, { recursive: true });
+      expect(await trajectorySignature(repo)).toBeUndefined();
     });
   });
 });

@@ -6,14 +6,26 @@ import type { Scorecard } from "../scorecard/schema.js";
 
 // runAudit is mocked: the Stop hook's job is wiring (baseline resolution, stdout
 // contract, exit-code mapping, loop guard), not re-testing the audit itself.
-// worktreeSignature is mocked too so the state-dedup gate is deterministic
-// without a real git repo (the tmp dirs are not repos).
-const { runAuditMock, worktreeSignatureMock } = vi.hoisted(() => ({
+// worktreeSignature AND trajectorySignature are mocked too so the snapshot-dedup
+// gate is deterministic without a real git repo (the tmp dirs are not repos). The
+// module-level mock replaces the WHOLE ./git.js module, so every export the hook
+// imports must be stubbed here or it would read as `undefined` at runtime.
+const { runAuditMock, worktreeSignatureMock, trajectorySignatureMock } = vi.hoisted(() => ({
   runAuditMock: vi.fn(),
   worktreeSignatureMock: vi.fn(),
+  trajectorySignatureMock: vi.fn(),
 }));
 vi.mock("../index.js", () => ({ runAudit: runAuditMock }));
-vi.mock("./git.js", () => ({ worktreeSignature: worktreeSignatureMock }));
+vi.mock("./git.js", () => ({
+  worktreeSignature: worktreeSignatureMock,
+  trajectorySignature: trajectorySignatureMock,
+}));
+
+// The composite snapshot marker is `head_sha:worktree-sig:trajectory-sig`. With the
+// mocks below it is deterministic; pin it as a named constant so the three marker
+// assertions read as intent, not magic strings.
+const TRAJ_SIG = "traj";
+const MARKER = `head:sig:${TRAJ_SIG}`;
 
 import { claudeCodeReporter } from "../reporters/claude-code.js";
 import type { Reporter } from "../reporters/types.js";
@@ -27,8 +39,9 @@ import {
 } from "./state.js";
 import { runStop } from "./stop.js";
 
-// Default fixture has files_changed > 0 so it reaches the reporter under the FR2
-// gate; pass 0 explicitly to exercise empty-diff silence.
+// `filesChanged` no longer gates surfacing (the FR2 empty-diff silencer was removed
+// in Story 1.2 — dedup is snapshot-equality, not a mutation count). It only shapes
+// the audited diff; pass 0 to model a zero-change `empty` turn.
 function scorecard(verdict: Scorecard["verdict"], filesChanged = 1): Scorecard {
   return {
     schema_version: "1",
@@ -59,6 +72,8 @@ describe("stop hook", () => {
     runAuditMock.mockReset();
     worktreeSignatureMock.mockReset();
     worktreeSignatureMock.mockResolvedValue("sig");
+    trajectorySignatureMock.mockReset();
+    trajectorySignatureMock.mockResolvedValue(TRAJ_SIG);
     stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     dir = await mkdtemp(join(tmpdir(), "blastcheck-stop-"));
@@ -131,8 +146,11 @@ describe("stop hook", () => {
     expect(runAuditMock).not.toHaveBeenCalled();
   });
 
-  describe("state-dedup (Story 1.1)", () => {
-    it("silences an empty diff (files_changed === 0) but still mirrors scorecard.json", async () => {
+  describe("snapshot-dedup (Story 1.2)", () => {
+    // AC #1/#2/#3: the FR2 empty-diff silencer is GONE. The first sighting of a
+    // zero-change turn now surfaces (an interim `empty` line) and writes the marker;
+    // dedup is snapshot-equality, never a mutation count.
+    it("surfaces the first empty turn (files_changed === 0) and writes the marker", async () => {
       await writeStateFile(baselinePath(dir), "sha");
       runAuditMock.mockResolvedValue(scorecard("warn", 0));
       const reporter = spyReporter();
@@ -140,13 +158,29 @@ describe("stop hook", () => {
       const code = await runStop({ cwd: dir }, dir, reporter);
 
       expect(code).toBe(EXIT.OK);
-      expect(reporter.surface).not.toHaveBeenCalled();
+      // First sighting of this snapshot → it surfaces, even with zero changed files.
+      expect(reporter.surface).toHaveBeenCalledTimes(1);
       // Source of truth is still durable (NFR6).
       expect(JSON.parse(await readFile(scorecardPath(dir), "utf8"))).toMatchObject({
         verdict: "warn",
       });
-      // No state was surfaced → no marker written.
-      await expect(readFile(lastSurfacedPath(dir), "utf8")).rejects.toThrow();
+      // A successful surface records the snapshot marker.
+      expect(await readFile(lastSurfacedPath(dir), "utf8")).toBe(MARKER);
+    });
+
+    // AC #2/#3: once the first empty turn has surfaced, an IDENTICAL empty repeat
+    // (same diff, same trajectory) is silenced — the snapshot was already emitted.
+    it("silences an identical empty repeat after the first empty surfaces", async () => {
+      await writeStateFile(baselinePath(dir), "sha");
+      runAuditMock.mockResolvedValue(scorecard("warn", 0));
+      const reporter = spyReporter();
+
+      expect(await runStop({ cwd: dir }, dir, reporter)).toBe(EXIT.OK);
+      expect(await runStop({ cwd: dir }, dir, reporter)).toBe(EXIT.OK);
+
+      // First empty surfaces; the second, unchanged empty is deduped.
+      expect(reporter.surface).toHaveBeenCalledTimes(1);
+      expect(await readFile(lastSurfacedPath(dir), "utf8")).toBe(MARKER);
     });
 
     it("surfaces once, then silences an unchanged second turn", async () => {
@@ -157,9 +191,28 @@ describe("stop hook", () => {
       expect(await runStop({ cwd: dir }, dir, reporter)).toBe(EXIT.OK);
       expect(await runStop({ cwd: dir }, dir, reporter)).toBe(EXIT.OK);
 
-      // Same head_sha + signature → the second turn is deduped.
+      // Same head_sha + worktree sig + trajectory sig → the second turn is deduped.
       expect(reporter.surface).toHaveBeenCalledTimes(1);
-      expect(await readFile(lastSurfacedPath(dir), "utf8")).toBe("head:sig");
+      expect(await readFile(lastSurfacedPath(dir), "utf8")).toBe(MARKER);
+    });
+
+    // AC #4: same diff, but the trajectory grows between turns (new tool-calls,
+    // no file change) → the composite signature changes → the second turn is a NEW
+    // snapshot and surfaces, rather than being mistaken for an idle repeat.
+    it("surfaces again when the trajectory grows despite an unchanged diff", async () => {
+      await writeStateFile(baselinePath(dir), "sha");
+      runAuditMock.mockResolvedValue(scorecard("warn"));
+      // Worktree signature is steady ("sig"); only the trajectory position moves.
+      trajectorySignatureMock.mockResolvedValueOnce("traj-1").mockResolvedValueOnce("traj-2");
+      const reporter = spyReporter();
+
+      expect(await runStop({ cwd: dir }, dir, reporter)).toBe(EXIT.OK);
+      expect(await runStop({ cwd: dir }, dir, reporter)).toBe(EXIT.OK);
+
+      // Different trajectory sig → different snapshot → both surface.
+      expect(reporter.surface).toHaveBeenCalledTimes(2);
+      // The marker tracks the most recent snapshot.
+      expect(await readFile(lastSurfacedPath(dir), "utf8")).toBe("head:sig:traj-2");
     });
 
     it("does not write the marker when surface throws (next turn re-surfaces)", async () => {
@@ -189,7 +242,7 @@ describe("stop hook", () => {
       await runStop({ cwd: dir }, dir, reporter);
 
       expect(reporter.surface).toHaveBeenCalledTimes(1);
-      expect(await readFile(lastSurfacedPath(dir), "utf8")).toBe("head:sig");
+      expect(await readFile(lastSurfacedPath(dir), "utf8")).toBe(MARKER);
     });
 
     it("does not dedup when the worktree signature is unavailable (git down)", async () => {
@@ -207,6 +260,24 @@ describe("stop hook", () => {
       await expect(readFile(lastSurfacedPath(dir), "utf8")).rejects.toThrow();
     });
 
+    // An UNREADABLE (not merely absent) trajectory is "cannot tell" too:
+    // `trajectorySignature` returns undefined, so — exactly like git-down — the
+    // turn surfaces and writes no marker, never folding an unreadable trajectory
+    // into a dedup that could falsely silence a real change (code review 2026-06-30).
+    it("does not dedup when the trajectory signature is unavailable (unreadable)", async () => {
+      await writeStateFile(baselinePath(dir), "sha");
+      runAuditMock.mockResolvedValue(scorecard("warn"));
+      // Worktree is fine; only the trajectory half cannot be read.
+      trajectorySignatureMock.mockResolvedValue(undefined);
+      const reporter = spyReporter();
+
+      await runStop({ cwd: dir }, dir, reporter);
+      await runStop({ cwd: dir }, dir, reporter);
+
+      expect(reporter.surface).toHaveBeenCalledTimes(2);
+      await expect(readFile(lastSurfacedPath(dir), "utf8")).rejects.toThrow();
+    });
+
     // Story 1.3 ↔ 1.1: the gate-fail PUSH (decision:"block") goes through the SAME
     // dedup gate. It fires once per state change, then the unchanged next turn is
     // silent — so the forced continuation can never become a Stop→block loop (NFR1).
@@ -220,16 +291,16 @@ describe("stop hook", () => {
       const firstWrite = stdout.mock.calls.map((c) => c[0]).join("");
       expect(JSON.parse(firstWrite).decision).toBe("block");
       // The successful surface wrote the marker (gate-fail still returns EXIT.OK).
-      expect(await readFile(lastSurfacedPath(dir), "utf8")).toBe("head:sig");
+      expect(await readFile(lastSurfacedPath(dir), "utf8")).toBe(MARKER);
 
-      // Second turn, same head_sha + signature → dedup silences the repeat block.
+      // Second turn, same snapshot signature → dedup silences the repeat block.
       const writesBefore = stdout.mock.calls.length;
       const auditsBefore = runAuditMock.mock.calls.length;
       expect(await runStop({ cwd: dir }, dir, claudeCodeReporter)).toBe(EXIT.OK);
       // Pin that the silence is the DEDUP path, not an unrelated early-return: turn 2
-      // must run the audit (so it reached past the baseline/empty-diff checks to the
-      // last-surfaced compare) AND still emit nothing. Without the audit assertion, a
-      // regression that bailed before surfacing for any reason would pass this test.
+      // must run the audit (so it reached past the baseline check to the last-surfaced
+      // compare) AND still emit nothing. Without the audit assertion, a regression
+      // that bailed before surfacing for any reason would pass this test.
       expect(runAuditMock.mock.calls.length).toBe(auditsBefore + 1);
       expect(stdout.mock.calls.length).toBe(writesBefore); // no second surface
     });
