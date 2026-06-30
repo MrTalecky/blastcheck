@@ -22,7 +22,7 @@ import { log } from "../log.js";
 import { rawReporter } from "../reporters/raw.js";
 import { DEFAULT_SURFACING, type Reporter, type SurfacingOptions } from "../reporters/types.js";
 import { EXIT, type ExitCode } from "../types.js";
-import { worktreeSignature } from "./git.js";
+import { trajectorySignature, worktreeSignature } from "./git.js";
 import {
   baselinePath,
   fileHasContent,
@@ -84,28 +84,32 @@ export async function runStop(
     );
   }
 
-  // State-dedup (Story 1.1): keep no-op turns silent so the same verdict is not
-  // re-flashed on every Stop, and so the gate-fail block (Story 1.3) fires once
-  // per state change. This gate is agent-agnostic and runs AFTER the durable
-  // mirror (NFR6) but BEFORE any surfacing. Silence returns EXIT.OK — the
-  // "continue silently" code — regardless of verdict; the verdict still lives in
-  // scorecard.json. Degrade toward surfacing, never toward false silence.
+  // Snapshot-equality dedup with a visible `empty` (Story 1.2, NFR-N1): keep no-op
+  // REPEATS silent so the same verdict is not re-flashed every Stop, while letting
+  // the FIRST sighting of any snapshot — including a zero-change `empty` turn —
+  // surface. The predicate is "have we already emitted a line for THIS snapshot",
+  // NEVER "were there mutations": a mutation-count gate would be indistinguishable
+  // from `empty` and would swallow the first `empty` line. This gate is
+  // agent-agnostic and runs AFTER the durable mirror (NFR6) but BEFORE any
+  // surfacing. Silence returns EXIT.OK regardless of verdict; the verdict still
+  // lives in scorecard.json. Degrade toward surfacing, never toward false silence.
 
-  // FR2 — empty diff: nothing was changed this turn, so there is nothing to
-  // surface. Do not touch the marker (no state was surfaced).
-  if (scorecard.stats.files_changed === 0) {
-    log("debug", "stop: empty diff (files_changed === 0) — surfacing suppressed");
-    return EXIT.OK;
-  }
-
-  // FR1 — unchanged state: silence only when we can PROVE the surface is
-  // identical to the last surfaced one. A `undefined` signature (git unavailable)
-  // is "cannot tell" → surface, never dedup on head_sha alone.
+  // Snapshot signature: silence only when we can PROVE the surface is identical to
+  // the last surfaced one. The signature folds in the trajectory position (FR-N4)
+  // so a turn with new tool-calls but no file change registers as a NEW snapshot
+  // rather than an idle repeat. EITHER half being `undefined` means "cannot tell"
+  // (git unavailable, or an unreadable — not merely absent — trajectory) → surface,
+  // never dedup. The worktree signature is computed first; when it is `undefined`
+  // the trajectory is not even read (the result would be discarded anyway).
   const signature = await worktreeSignature(cwd, baselineSha);
-  // `current` is undefined exactly when the signature is unknown (git down) — so
-  // the dedup compare and the marker write below are both naturally skipped, and
-  // no `?` sentinel is ever persisted or matched.
-  const current = signature === undefined ? undefined : `${scorecard.head_sha}:${signature}`;
+  const trajSig = signature === undefined ? undefined : await trajectorySignature(cwd);
+  // `current` is undefined exactly when a half is unknown — so the dedup compare
+  // and the marker write below are both naturally skipped, and no `?` sentinel is
+  // ever persisted or matched.
+  const current =
+    signature === undefined || trajSig === undefined
+      ? undefined
+      : `${scorecard.head_sha}:${signature}:${trajSig}`;
   if (current !== undefined) {
     const lastSurfaced = await readStateFile(lastSurfacedPath(cwd));
     if (lastSurfaced === current) {

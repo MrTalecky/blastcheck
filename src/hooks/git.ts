@@ -8,8 +8,10 @@
  */
 
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { diffPatch, headSha } from "../git/adapter.js";
 import { log } from "../log.js";
+import { trajectoryPath } from "./state.js";
 
 /** Current `HEAD` sha, or `undefined` when git is unavailable (no throw). */
 export async function currentHead(cwd: string): Promise<string | undefined> {
@@ -44,4 +46,42 @@ export async function worktreeSignature(
     );
     return undefined;
   }
+}
+
+/**
+ * A sha256 fingerprint of the session's trajectory (the appended tool-call log),
+ * used as the trajectory-position half of the snapshot signature (Story 1.2,
+ * NFR-N1). Folding this into the dedup marker makes "the agent ran tool-calls but
+ * changed no files" a DISTINCT snapshot from a truly idle turn, so it surfaces
+ * instead of being mistaken for an idle repeat (FR-N4).
+ *
+ * Failure semantics mirror {@link worktreeSignature} (consistency rule #6, degrade
+ * toward surfacing — NEVER toward false silence). Two distinct "no content" cases
+ * are deliberately NOT conflated:
+ *  - A **missing or empty** trajectory is a valid snapshot component (zero
+ *    tool-calls is half of the `empty` definition) → the stable hash of `""`.
+ *  - Any **other** read failure (permissions, EISDIR, transient I/O) is "cannot
+ *    tell" → `undefined`, so the caller skips dedup and surfaces, exactly as a
+ *    git-down worktree signature does. Collapsing these to the empty hash would
+ *    let an unreadable real trajectory be mistaken for an idle `empty` and be
+ *    silently deduped — the one outcome the design forbids (code review 2026-06-30).
+ * Never throws.
+ */
+export async function trajectorySignature(cwd: string): Promise<string | undefined> {
+  let content: string;
+  try {
+    content = await readFile(trajectoryPath(cwd), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      // Absent trajectory ≡ empty trajectory: a stable, defined snapshot component.
+      content = "";
+    } else {
+      log(
+        "debug",
+        `hook: trajectory unreadable (cannot tell → surface): ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return undefined;
+    }
+  }
+  return createHash("sha256").update(content).digest("hex");
 }

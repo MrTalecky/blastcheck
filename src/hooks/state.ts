@@ -9,8 +9,12 @@
  *  - `baseline`         SHA of the first session commit = the audit baseline.
  *  - `trajectory.jsonl` normalized, loader-readable tool events (appended).
  *  - `scorecard.json`   a mirror of the last `Stop` scorecard (stdout is primary).
- *  - `last-surfaced`     state marker (`head_sha:worktree-hash`) of the last
- *                        surfaced verdict, so no-op turns stay silent (Story 1.1).
+ *  - `last-surfaced`     snapshot signature (`head_sha:worktree-hash:trajectory-hash`)
+ *                        of the last surfaced verdict, so a repeat of THAT snapshot
+ *                        stays silent while a new snapshot — including the first
+ *                        zero-change `empty` turn — surfaces (Story 1.2). Ephemeral,
+ *                        session-scoped, gitignored — a fingerprint, not persistent
+ *                        history (NFR3/NFR11 stateless non-goal).
  *
  * These helpers never throw on a missing file — hooks must degrade quietly and
  * must never crash a Claude Code session (consistency rule #6).
@@ -44,9 +48,13 @@ export function scorecardPath(cwd: string): string {
 }
 
 /**
- * Path to the `last-surfaced` marker — the `head_sha:worktree-hash` state of the
- * last verdict the reporter actually surfaced. Lets a `hook stop` stay silent on
- * a no-op turn when nothing changed since the last surfaced verdict (Story 1.1).
+ * Path to the `last-surfaced` marker — the `head_sha:worktree-hash:trajectory-hash`
+ * snapshot signature of the last verdict the reporter actually surfaced. Lets a
+ * `hook stop` stay silent when THIS snapshot has already been emitted, while a new
+ * snapshot — including the first zero-change `empty` turn — still surfaces (Story
+ * 1.2; the predicate is snapshot-equality, NOT a mutation count). Folding in the
+ * trajectory HASH (not its contents) keeps the marker an ephemeral, session-scoped,
+ * gitignored fingerprint, not persistent forensic history (NFR3/NFR11 non-goal).
  */
 export function lastSurfacedPath(cwd: string): string {
   return join(cwd, STATE_DIR, "last-surfaced");
